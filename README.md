@@ -17,7 +17,7 @@ Run in order. Steps 1–3 rebuild the entire deployment from nothing.
 | 1 | [`deploy/01-provision-scaleway.sh`](deploy/01-provision-scaleway.sh) | workstation | Creates 5 projects, registers your SSH key, creates one IAM application + scoped policy + API key per member, and boots the VPS with [`cloud-init-hermes-base.yaml`](deploy/cloud-init-hermes-base.yaml). |
 | 2 | [`deploy/02-install-hermes.sh <ip>`](deploy/02-install-hermes.sh) | workstation → host | Installs Hermes once, system-wide, checksum-verified and pinned to a commit. ~6 min. |
 | 3 | [`deploy/03-configure-profiles.sh <ip>`](deploy/03-configure-profiles.sh) | workstation → host | Installs the [gateway unit](deploy/hermes-gateway@.service), writes each member's `.env` via [`configure-profile.sh`](deploy/configure-profile.sh), points Hermes at Scaleway, starts all four gateways. |
-| 4 | `hermes whatsapp` / `hermes gateway setup` | host, per member | Add messaging channels. Interactive over SSH — **no web UI required**. |
+| 4 | [`deploy/configure-profile.sh <user> -`](deploy/configure-profile.sh) | host, per member | Add messaging channels by piping `KEY=VALUE` lines in — non-interactive, secrets never enter argv or shell history. See [Configured: Discord for Mattis](#configured-discord-for-mattis). `hermes whatsapp` / `hermes gateway setup` remain available for interactive setup over SSH — **no web UI required**. |
 
 Step 1 writes the four inference keys to `~/.hermes-family-keys/` (mode 600). Scaleway
 shows a secret key **once**; those files are the only copy. They never enter git.
@@ -114,6 +114,34 @@ So the DNS answer depends entirely on which WhatsApp backend you pick. With Disc
 Slack and the Baileys WhatsApp bridge, **no domain, no TLS, no reverse proxy, no inbound
 ports** are required.
 
+### Configured: Discord for Mattis
+
+Verified end-to-end on 2026-07-22: DM → gateway → allowlist → Scaleway inference → reply.
+
+**One Discord application per member.** A bot token authenticates exactly one gateway, so
+members cannot share one. Each member gets their own app, token and allowlist.
+
+| Setting | Value | Why |
+|---|---|---|
+| Privileged intents | **Server Members** + **Message Content** ON, Presence OFF | Both are required. Without Message Content the bot connects, receives events, and sees empty text — it looks online and never answers. |
+| Permissions integer | `379904` | View Channels, Send Messages, Embed Links, Attach Files, Read Message History, Use Slash Commands. No thread permissions. |
+| `DISCORD_BOT_TOKEN` | Bot page → Reset Token | Shown once. Not the Application ID, Public Key or Client Secret. |
+| `DISCORD_ALLOWED_USERS` | Numeric user ID | **Must be the 18-digit snowflake, not the username.** A username silently never matches: the bot stays online and ignores every message, with nothing in the log. |
+| `DISCORD_AUTO_THREAD` | `false` | Defaults to `true`, which makes the bot spawn a thread per `@mention` — needing Create Public Threads, which `379904` deliberately omits. Set false so replies land inline. |
+
+**A server is required even for DM-only use.** Discord will not let a user open a DM to a
+bot unless they share a guild. The server is a formality; the DM is the actual surface.
+
+**Public Bot cannot be disabled.** Discord refuses to turn the toggle off, so anyone with
+the Application ID can install the bot into their own server. This is not the security
+boundary and does not need to be. `DISCORD_ALLOWED_USERS` is enforced in the adapter
+*before* any model call, so an unauthorised sender is dropped without consuming inference
+spend. Confirmed in `plugins/platforms/discord/adapter.py`.
+
+**Voice messages do not work.** Hermes caches the audio, then fails with
+`STT provider 'local' configured but unavailable`. Nothing is surfaced to the sender —
+the message is simply ignored. Needs `faster-whisper` or `HERMES_LOCAL_STT_COMMAND`.
+
 ## Requirements status
 
 | ID | Requirement | Status |
@@ -125,7 +153,7 @@ ports** are required.
 | R5 | Clarify DNS need | **Done** — not needed unless using WhatsApp Cloud API |
 | R6 | Track inference spend per profile | **Open** — see below |
 | R7 | Enforce cost control per profile | **Blocked** — see below |
-| R8 | Mixed messaging channels per member | **Ready** — env vars verified, tokens not yet added |
+| R8 | Mixed messaging channels per member | **Partly** — Discord live for Mattis, verified end-to-end. Other members and platforms not yet added. |
 
 ## Open questions
 
@@ -168,3 +196,13 @@ ports** are required.
 - **SSH keys are project-scoped in Scaleway.** A key registered in another project is not
   injected, and the instance boots unreachable — a reboot does not fix it.
 - **Resources cannot move between projects.** Relocating the VPS means recreating it.
+- **Messaging libraries must be installed at build time.** Hermes lazy-installs platform
+  deps on first use, but the gateway units run `ProtectSystem=full`, so `/usr/local/lib`
+  is read-only to them and the lazy install can never succeed. Step 2 installs the
+  Discord/Slack/Telegram deps up front, reading the version pins from the pinned tree's
+  own `LAZY_DEPS` table so they cannot drift from `PIN_COMMIT`. Symptom when missing:
+  `Platform 'Discord' requirements not met` and a gateway that starts with no platforms.
+- **The venv has no `pip`.** It is uv-created; use
+  `/root/.hermes/bin/uv pip install --python /usr/local/lib/hermes-agent/venv/bin/python`.
+  A bare `pip list` fails, which makes "is package X installed?" checks silently return
+  nothing rather than an error.
