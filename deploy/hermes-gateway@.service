@@ -1,0 +1,76 @@
+# Hermes gateway, one instance per Linux user: hermes-gateway@robert, etc.
+#
+# Derived from the unit `hermes gateway install --system` generates, with three
+# changes that matter on a shared 2 GB family host:
+#   1. Templated on %i so four family members can run side by side. Hermes'
+#      own installer only supports a single gateway per host.
+#   2. Restart rate-limiting restored. Upstream sets StartLimitIntervalSec=0,
+#      which lets a crash-looping gateway retry forever and burn provider spend.
+#   3. Memory caps + sandboxing, so one profile cannot OOM the others or read
+#      another family member's secrets.
+
+[Unit]
+Description=Hermes Agent Gateway (%i)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=%i
+Group=%i
+# /home/%i, not /home/%i/.hermes: WorkingDirectory applies to ExecStartPre too,
+# so pointing it at .hermes would fail 200/CHDIR before we could create it.
+WorkingDirectory=/home/%i
+
+Environment="HOME=/home/%i"
+Environment="USER=%i"
+Environment="LOGNAME=%i"
+Environment="PATH=/usr/local/lib/hermes-agent/venv/bin:/usr/local/lib/hermes-agent/node_modules/.bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="VIRTUAL_ENV=/usr/local/lib/hermes-agent/venv"
+Environment="HERMES_HOME=/home/%i/.hermes"
+
+# A never-started profile has no HERMES_HOME yet, and WorkingDirectory= would
+# fail with 200/CHDIR before ExecStart ever runs. Create it first; idempotent.
+ExecStartPre=/bin/mkdir -p /home/%i/.hermes
+ExecStart=/usr/local/lib/hermes-agent/venv/bin/python -m hermes_cli.main gateway run
+ExecReload=/bin/kill -USR1 $MAINPID
+ExecStopPost=-/usr/local/lib/hermes-agent/venv/bin/python -m gateway.cgroup_cleanup
+
+Restart=always
+RestartSec=10
+# Upstream's semantics: 75 = restart requested, 78 = config error, do not retry.
+RestartForceExitStatus=75
+RestartPreventExitStatus=78
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=60
+
+# --- memory: measured idle RSS is ~133 MB; cap well above that but low
+# --- enough that four instances cannot exhaust a 2 GB host.
+MemoryHigh=240M
+MemoryMax=320M
+MemorySwapMax=256M
+
+# --- sandboxing ---
+# ProtectHome=tmpfs hides every /home, then BindPaths grants back only this
+# instance's own home. A child's agent literally cannot see another profile.
+ProtectHome=tmpfs
+BindPaths=/home/%i
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectKernelTunables=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hermes-%i
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,79 @@
+#cloud-config
+# ---------------------------------------------------------------------------
+# Hermes family host — base OS only.
+#
+# Deliberately does NOT install Hermes. The install is driven over SSH so the
+# real memory footprint can be measured one profile at a time on a 2 GB box.
+# Target image: debian_trixie (Debian 13). Target type: DEV1-S (2 vCPU / 2 GB
+# / 20 GB local NVMe).
+# ---------------------------------------------------------------------------
+
+hostname: hermes-family
+timezone: Europe/Stockholm
+
+package_update: true
+package_upgrade: true
+packages:
+  - curl
+  - git
+  - ca-certificates
+  - jq
+  - ripgrep
+  - unattended-upgrades
+  - needrestart
+
+write_files:
+  # Four chatty agents will otherwise fill 20 GB with journal.
+  - path: /etc/systemd/journald.conf.d/10-cap.conf
+    permissions: "0644"
+    content: |
+      [Journal]
+      SystemMaxUse=200M
+      SystemMaxFileSize=20M
+      MaxRetentionSec=1month
+
+  - path: /etc/ssh/sshd_config.d/10-hardening.conf
+    permissions: "0644"
+    content: |
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      PermitRootLogin prohibit-password
+      PermitEmptyPasswords no
+      X11Forwarding no
+      MaxAuthTries 3
+      AllowTcpForwarding no
+
+  # 2 GB of RAM with four Python agents: swap turns "OOM killer picks a victim"
+  # into "things get slow". swappiness kept low so it is a safety net, not a
+  # default behaviour.
+  - path: /etc/sysctl.d/60-hermes.conf
+    permissions: "0644"
+    content: |
+      vm.swappiness=20
+      net.ipv4.tcp_syncookies=1
+
+  - path: /etc/apt/apt.conf.d/20auto-upgrades
+    permissions: "0644"
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+
+runcmd:
+  # --- swapfile (2 GB) ---
+  - [ sh, -c, "test -f /swapfile || (fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile)" ]
+  - [ sh, -c, "swapon --show | grep -q /swapfile || swapon /swapfile" ]
+  - [ sh, -c, "grep -q '^/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab" ]
+
+  # --- one unprivileged Linux user per family member ---
+  # No sudo, no SSH keys, locked password, home 0700. This is the isolation
+  # boundary: Hermes profiles alone do NOT stop one agent reading another's
+  # secrets, because they would all run as the same uid.
+  - [ sh, -c, "for u in robert sofia mattis love; do id -u $u >/dev/null 2>&1 || adduser --disabled-password --gecos '' $u; chmod 700 /home/$u; passwd -l $u; done" ]
+
+  # --- apply ---
+  - [ sysctl, --system ]
+  - [ systemctl, restart, systemd-journald ]
+  - [ systemctl, restart, ssh ]
+  - [ sh, -c, "echo 'hermes-base-ready' > /etc/hermes-bootstrap-status" ]
+
+final_message: "Hermes base host ready after $UPTIME s. Hermes itself is NOT installed yet — install over SSH."
