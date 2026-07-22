@@ -78,7 +78,14 @@ trap - EXIT
 
 echo "wrote ${ENV_FILE} ($(stat -c '%U:%G %a' "$ENV_FILE"))"
 
-if systemctl list-unit-files "${UNIT}" >/dev/null 2>&1; then
+# `systemctl list-unit-files hermes-gateway@mattis` exits 1 — there is no unit
+# *file* by that name, only the template hermes-gateway@.service. So the old
+# guard skipped the restart on every single run, leaving the gateway alive with
+# a stale environment while this script still printed "wrote ...". A new channel
+# token appeared in .env and was never loaded.
+# LoadState resolves template instances: "loaded" if the template is installed,
+# "not-found" if it is not.
+if [[ "$(systemctl show -p LoadState --value "$UNIT" 2>/dev/null)" == "loaded" ]]; then
   systemctl restart "$UNIT"
   sleep 3
   echo "${UNIT}: $(systemctl is-active "$UNIT")"

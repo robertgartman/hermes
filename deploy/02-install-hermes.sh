@@ -39,6 +39,34 @@ echo "${INSTALLER_SHA}  /root/hermes-install.sh" | sha256sum -c - || {
   exit 90
 }
 HOME=/root bash /root/hermes-install.sh --skip-setup --skip-browser --non-interactive --commit "${PIN_COMMIT}"
+
+# Messaging platform dependencies, installed once here at build time.
+#
+# Hermes can lazy-install these on first use (tools/lazy_deps.py), but the
+# gateway units run under ProtectSystem=full, so /usr/local/lib is read-only to
+# them and the lazy path can never succeed on this host. Without this step,
+# adding any channel later fails at runtime with
+#   Platform 'Discord' requirements not met (pip install 'hermes-agent[messaging]')
+# and the gateway starts with no platforms connected.
+#
+# Specs are read from the pinned tree's own LAZY_DEPS table rather than
+# duplicated here, so they cannot drift from PIN_COMMIT.
+VENV_PY=/usr/local/lib/hermes-agent/venv/bin/python
+SPECS=\$(\$VENV_PY <<PYEOF
+import sys
+sys.path.insert(0, "/usr/local/lib/hermes-agent")
+from tools.lazy_deps import LAZY_DEPS
+want = ("platform.discord", "platform.slack", "platform.telegram")
+print(" ".join(dict.fromkeys(s for k in want for s in LAZY_DEPS[k])))
+PYEOF
+)
+# SPECS must word-split into separate arguments, but contains extras brackets
+# (discord.py[voice]) that the shell would glob. Disable globbing across it.
+# The venv is uv-created and has no pip; use the uv the installer dropped.
+set -f
+/root/.hermes/bin/uv pip install --python "\$VENV_PY" \$SPECS
+set +f
+
 echo DONE > /root/.hermes-install-done
 REMOTE
 
