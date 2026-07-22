@@ -19,7 +19,11 @@ HOST="${1:-}"
 MEMBERS=(robert sofia mattis love)
 SSH_KEY="${SSH_KEY:-$HOME/.ssh/id_rsa}"
 KEYDIR="${KEYDIR:-$HOME/.hermes-family-keys}"
-MODEL="${MODEL:-mistral-small-3.2-24b-instruct-2506}"
+# mistral-small-3.2-24b is too weak to drive bundled skills — asked to check the
+# calendar it replies "I don't have the capability" rather than running the
+# skill's script. mistral-medium handles it correctly. Do not downgrade without
+# re-testing skill use end to end.
+MODEL="${MODEL:-mistral-medium-3.5-128b}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SSHO=(-o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes -i "$SSH_KEY")
 
