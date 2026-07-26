@@ -64,7 +64,26 @@ for u in robert sofia mattis love; do
   # Keys are nested under `model:` — a top-level `provider:` is never read.
   $R hermes config set model.provider openai-api >/dev/null 2>&1
   $R hermes config set model.default "$MODEL" >/dev/null 2>&1
-  echo "  $u -> openai-api / $MODEL"
+
+  # Voice transcription via Scaleway's whisper-large-v3, NOT the built-in
+  # stt.provider=openai path — that path validates the model name against
+  # OpenAI's own catalog, silently substitutes the unrecognized
+  # "whisper-large-v3" with "whisper-1", and Scaleway then 422s because it has
+  # no model by that name. The command-provider registry
+  # (stt.providers.<name>: type: command) has no such whitelist — it just runs
+  # the shell command — so it's the working path. Also: Scaleway ignores
+  # response_format=text and always returns JSON regardless, hence `| jq -r
+  # .text` rather than writing curl's body straight to {output_path}. See the
+  # README's "Configured: voice transcription via Scaleway" section for the
+  # full incident (verified against real Discord voice messages, not
+  # synthesized audio).
+  $R hermes config set stt.provider scaleway >/dev/null 2>&1
+  $R hermes config set stt.providers.scaleway.type command >/dev/null 2>&1
+  $R hermes config set "stt.providers.scaleway.command" "curl -sS -X POST \$OPENAI_BASE_URL/audio/transcriptions -H \"Authorization: Bearer \$OPENAI_API_KEY\" -F \"file=@{input_path}\" -F \"model=whisper-large-v3\" | jq -r .text" >/dev/null 2>&1
+  $R hermes config set stt.providers.scaleway.format txt >/dev/null 2>&1
+  $R hermes config set stt.providers.scaleway.timeout 60 >/dev/null 2>&1
+
+  echo "  $u -> openai-api / $MODEL, stt -> scaleway/whisper-large-v3"
 done
 REMOTE
 

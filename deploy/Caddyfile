@@ -1,0 +1,45 @@
+# Reverse proxy for the four hermes-agent API servers. One vhost per member,
+# routed purely by FQDN. Each hermes-agent API server stays bound to
+# 127.0.0.1 (see 04-enable-api-server.sh) — Caddy is the ONLY thing with a
+# public listener, so the "full toolset access, including terminal commands"
+# surface the API server docs warn about is never directly reachable.
+#
+# TLS is issued via dynv6 DNS-01 (see update-dynv6-records.sh for the zone/
+# credential story), so port 80 / HTTP-01 is never needed — only 443.
+#
+# 1=robert 2=sofia 3=mattis 4=love — must match 04-enable-api-server.sh and
+# update-dynv6-records.sh.
+
+{
+	# Let's Encrypt uses this for expiry/revocation notices only — not
+	# user-facing. Change if you'd rather use a different address.
+	email robert.gartman.sweden@gmail.com
+}
+
+1.agent-hermes.dynv6.net {
+	tls {
+		dns dynv6 {env.DYNV6_API_TOKEN}
+	}
+	reverse_proxy 127.0.0.1:8642
+}
+
+2.agent-hermes.dynv6.net {
+	tls {
+		dns dynv6 {env.DYNV6_API_TOKEN}
+	}
+	reverse_proxy 127.0.0.1:8643
+}
+
+3.agent-hermes.dynv6.net {
+	tls {
+		dns dynv6 {env.DYNV6_API_TOKEN}
+	}
+	reverse_proxy 127.0.0.1:8644
+}
+
+4.agent-hermes.dynv6.net {
+	tls {
+		dns dynv6 {env.DYNV6_API_TOKEN}
+	}
+	reverse_proxy 127.0.0.1:8645
+}

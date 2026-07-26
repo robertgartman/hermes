@@ -1,0 +1,39 @@
+# Custom Caddy binary (built via caddyserver.com's download API with the
+# github.com/caddy-dns/dynv6 plugin baked in — the stock apt/GitHub-release
+# binary does NOT include third-party DNS provider modules, and building
+# with xcaddy would mean installing a Go toolchain on a 2 GB box just to
+# compile a proxy). Since we're not using the distro package, this is a full
+# unit rather than a drop-in against a vendor-shipped one.
+#
+# EnvironmentFile points at the shared dynv6 API token (Bearer auth against
+# dynv6's REST API v2 — NOT a TSIG key; see update-dynv6-records.sh for how
+# that got sorted out) — root:root, mode 600, deliberately outside every
+# /home/<member> tree so no hermes-gateway@<member> process (which CAN read
+# its own home) has any path to a credential that can rewrite DNS + certs
+# for the whole family.
+
+[Unit]
+Description=Caddy (hermes-agent reverse proxy)
+Documentation=https://caddyserver.com/docs/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+User=caddy
+Group=caddy
+ExecStart=/usr/local/bin/caddy run --environ --config /etc/caddy/Caddyfile
+ExecReload=/usr/local/bin/caddy reload --config /etc/caddy/Caddyfile --force
+EnvironmentFile=/etc/dynv6/api-token.env
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=5s
+LimitNOFILE=1048576
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+NoNewPrivileges=true
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target
