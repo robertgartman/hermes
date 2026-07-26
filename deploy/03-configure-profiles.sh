@@ -24,6 +24,18 @@ KEYDIR="${KEYDIR:-$HOME/.hermes-family-keys}"
 # skill's script. mistral-medium handles it correctly. Do not downgrade without
 # re-testing skill use end to end.
 MODEL="${MODEL:-mistral-medium-3.5-128b}"
+
+# Model tier aliases exposed to family clients (Chatbox etc.) via the API
+# server's /v1/models — see README § Mobile / API access. The ALIAS NAMES are
+# the stable contract: family members learn "smart", not model IDs. Swap the
+# model behind a tier here as better Scaleway options appear; nobody using the
+# alias needs to know or care. Picked 2026-07-26 from the then-current
+# 18-model Scaleway catalog by parameter count / lineage, not a benchmark —
+# revisit if Scaleway's lineup changes meaningfully.
+ALIAS_QUICK="${ALIAS_QUICK:-mistral-small-3.2-24b-instruct-2506}"
+ALIAS_MEDIUM="${ALIAS_MEDIUM:-llama-3.3-70b-instruct}"
+ALIAS_SMART="${ALIAS_SMART:-mistral-medium-3.5-128b}"
+ALIAS_ULTRA="${ALIAS_ULTRA:-qwen3.5-397b-a17b}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SSHO=(-o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes -i "$SSH_KEY")
 
@@ -55,7 +67,8 @@ for m in "${MEMBERS[@]}"; do
 done
 
 echo "== provider config =="
-ssh "${SSHO[@]}" "root@$HOST" "MODEL='$MODEL' bash -s" <<'REMOTE'
+ssh "${SSHO[@]}" "root@$HOST" \
+  "MODEL='$MODEL' ALIAS_QUICK='$ALIAS_QUICK' ALIAS_MEDIUM='$ALIAS_MEDIUM' ALIAS_SMART='$ALIAS_SMART' ALIAS_ULTRA='$ALIAS_ULTRA' bash -s" <<'REMOTE'
 for u in robert sofia mattis love; do
   R="sudo -u $u -H env PATH=/usr/local/bin:/usr/bin:/bin HERMES_HOME=/home/$u/.hermes"
   # Scaleway is reached through the OpenAI-compatible provider. `provider: custom`
@@ -64,6 +77,20 @@ for u in robert sofia mattis love; do
   # Keys are nested under `model:` — a top-level `provider:` is never read.
   $R hermes config set model.provider openai-api >/dev/null 2>&1
   $R hermes config set model.default "$MODEL" >/dev/null 2>&1
+
+  # Model tier aliases for API-server clients (Chatbox etc.) — a SEPARATE
+  # mechanism from model.default above, found by reading
+  # gateway/platforms/api_server.py directly (not reliably documented):
+  # platforms.api_server.extra.model_routes.<alias>.{model,provider}. This is
+  # NOT the same as model_catalog/model_aliases (tried first, both dead ends
+  # for CLI-side switching — see README). Verified end-to-end: listed
+  # correctly via GET /v1/models AND confirmed to route to the right backend
+  # model via a live /v1/chat/completions call, not just cosmetic.
+  for pair in "quick:$ALIAS_QUICK" "medium:$ALIAS_MEDIUM" "smart:$ALIAS_SMART" "ultra:$ALIAS_ULTRA"; do
+    alias_name="${pair%%:*}"; alias_model="${pair#*:}"
+    $R hermes config set "platforms.api_server.extra.model_routes.$alias_name.model" "$alias_model" >/dev/null 2>&1
+    $R hermes config set "platforms.api_server.extra.model_routes.$alias_name.provider" openai-api >/dev/null 2>&1
+  done
 
   # Voice transcription via Scaleway's whisper-large-v3, NOT the built-in
   # stt.provider=openai path — that path validates the model name against
@@ -83,15 +110,20 @@ for u in robert sofia mattis love; do
   $R hermes config set stt.providers.scaleway.format txt >/dev/null 2>&1
   $R hermes config set stt.providers.scaleway.timeout 60 >/dev/null 2>&1
 
-  echo "  $u -> openai-api / $MODEL, stt -> scaleway/whisper-large-v3"
+  echo "  $u -> openai-api / $MODEL, stt -> scaleway/whisper-large-v3, aliases -> quick/medium/smart/ultra"
 done
 REMOTE
 
 echo "== starting gateways =="
+# `restart`, not `enable --now`: the latter only starts a stopped unit, so a
+# re-run against an already-running deployment (e.g. after changing an
+# ALIAS_* model above) would silently leave the old config loaded. Safe to
+# re-run — that's the whole point of aliases being editable here.
 ssh "${SSHO[@]}" "root@$HOST" '
   for u in robert sofia mattis love; do
     systemctl reset-failed hermes-gateway@$u 2>/dev/null || true
-    systemctl enable --now hermes-gateway@$u >/dev/null 2>&1
+    systemctl enable hermes-gateway@$u >/dev/null 2>&1
+    systemctl restart hermes-gateway@$u
   done
   sleep 25
   for u in robert sofia mattis love; do

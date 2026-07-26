@@ -244,6 +244,56 @@ Each hermes-agent API server stays bound to `127.0.0.1` — Caddy is the only th
 public listener, since the API server "gives full access to hermes-agent's toolset,
 including terminal commands" (its own docs' words).
 
+### Model tier aliases
+
+The API server (and only the API server — see below) exposes four named model tiers via
+`GET /v1/models`, so family members pick `quick` / `medium` / `smart` / `ultra` in Chatbox
+without needing to know Scaleway model names or their tradeoffs:
+
+| Alias | Model | Why |
+|---|---|---|
+| `quick` | `mistral-small-3.2-24b-instruct-2506` | Smallest general instruct model, fastest |
+| `medium` | `llama-3.3-70b-instruct` | Well-established 70B, solid middle tier |
+| `smart` | `mistral-medium-3.5-128b` | The deployment's own default — see the `03-configure-profiles.sh` note on why `small` can't drive skills |
+| `ultra` | `qwen3.5-397b-a17b` | Largest model in the Scaleway catalog by parameter count (397B) — a size heuristic, not a benchmarked ranking; least-confident pick of the four |
+
+Picked 2026-07-26 from Scaleway's then-current 18-model catalog. **Alias names are the
+stable contract** — swap the model behind a tier in `03-configure-profiles.sh`
+(`ALIAS_QUICK` / `ALIAS_MEDIUM` / `ALIAS_SMART` / `ALIAS_ULTRA`) as better options appear;
+nobody using the alias needs to relearn anything. Verified two ways, not just listed:
+
+```bash
+# 1. Appears in the model list
+curl https://1.agent-hermes.dynv6.net/v1/models -H "Authorization: Bearer $(cat ~/.hermes-family-keys/api-server/robert.key)"
+
+# 2. Actually routes to the right backend model (checked via the agent log,
+#    not just a 200 response) — a request with "model": "quick" logged
+#    model=mistral-small-3.2-24b-instruct-2506 on the Scaleway call
+curl https://1.agent-hermes.dynv6.net/v1/chat/completions \
+  -H "Authorization: Bearer $(cat ~/.hermes-family-keys/api-server/robert.key)" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "quick", "messages": [{"role": "user", "content": "Hello!"}]}'
+```
+
+**This is a separate mechanism from `model.default` above, easy to confuse with two other
+config keys that don't do this:**
+
+- `platforms.api_server.extra.model_routes.<alias>.{model,provider}` — the real key. Not
+  reliably documented anywhere findable by search; found by grepping the installed
+  package's own source (`gateway/platforms/api_server.py`) directly.
+- `model_catalog.<name>.*` and `model_aliases.<name>.*` — both dead ends, tried first. Both
+  are "recognized" by `hermes config set` (no warning), but neither actually resolves as a
+  callable model via `model.default` or the `-m` CLI flag (`HTTP 422: model 'x' not
+  found` — confirmed on the live host, not assumed). These may govern something else
+  entirely, or nothing yet; they are not the API-server model-tier mechanism regardless.
+- `hermes config set`'s "not a recognized config key" warning is noise specifically for
+  `platforms.api_server.extra.model_routes.<alias>.*` — every key under it triggers
+  `Did you mean: stt.provider` because the validator doesn't know about dynamically-named
+  entries. The value is still written correctly; this is the same false-positive pattern
+  documented under [Configured: voice transcription via Scaleway](#configured-voice-transcription-via-scaleway).
+  Don't trust the warning either way — verify against what's actually written and, ideally,
+  a live request.
+
 ### Configured: dynv6 + Caddy reverse proxy
 
 Verified end-to-end on 2026-07-26: all four member endpoints return `200` with real
