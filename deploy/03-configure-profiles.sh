@@ -78,6 +78,22 @@ for u in robert sofia mattis love; do
   $R hermes config set model.provider openai-api >/dev/null 2>&1
   $R hermes config set model.default "$MODEL" >/dev/null 2>&1
 
+  # Without this, the "ultra" tier alias (qwen3.5-397b-a17b) 400s on every
+  # single request, tool use or not — confirmed with a plain "say hi".
+  # model.max_tokens is unset by default, so Hermes falls back to a
+  # per-provider default that exceeds Scaleway's hard 16384-token cap for
+  # this model: "HTTP 400: payload validation: max_completion_tokens is
+  # limited to 16384 for qwen3.5-397b-a17b". This was already noted (but
+  # never fixed) in the 2026-07-22 skills commit. model.max_tokens is a
+  # GLOBAL setting — model_routes has no per-alias override for it (checked
+  # the source: allowed_keys is only model/provider/api_key/base_url) — and
+  # all four tiers share the openai-api provider, so this caps every tier,
+  # not just ultra. 16384 output tokens is generous enough that quick/
+  # medium/smart lose nothing in practice. Verified 2026-07-27: ultra went
+  # from failing 100% of requests to working standalone and through the
+  # google-workspace skill.
+  $R hermes config set model.max_tokens 16384 >/dev/null 2>&1
+
   # Model tier aliases for API-server clients (Chatbox etc.) — a SEPARATE
   # mechanism from model.default above, found by reading
   # gateway/platforms/api_server.py directly (not reliably documented):

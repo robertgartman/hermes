@@ -211,6 +211,64 @@ schema exactly, and transcription works. (The same false-positive pattern showed
 for `model_catalog` — that one, unlike this one, actually *was* the wrong key. Don't trust
 the warning either way; verify against what actually gets written and, ideally, a live test.)
 
+### Configured: `python3` wrapper (google-workspace skill reliability)
+
+`02-install-hermes.sh` installs `/usr/local/bin/python` so bundled skills that invoke a bare
+`python` (google-workspace among them) resolve to the Hermes venv (which has
+`googleapiclient` etc. installed) rather than to nothing — Debian ships no `python` at all.
+That fix, from 2026-07-22, only covered the name `python`. It did not cover `python3`.
+
+**Symptom, reported 2026-07-27:** "check my calendar" over the API server succeeded
+maybe 1 time in 5 — the rest either stalled mid-sentence (`finish_reason: stop`, no tool
+call ever made) or hallucinated ("no calendar tool installed", offering to install `gcal` or
+fall back to Python's `calendar` module). Direct CLI testing (`hermes -z "check my
+calendar"`) was more reliable (4/5) but not perfect either, pointing at something
+upstream of the API server specifically as well as this bug.
+
+**Root cause, confirmed from `journalctl -u hermes-gateway@robert`:** roughly half the time
+the model reaches for `python3` instead of `python` — a perfectly reasonable name on Debian,
+just not the wrapped one. `/usr/local/bin/python3` didn't exist, so it fell through to the
+bare system `/usr/bin/python3`, hit `ModuleNotFoundError: No module named 'googleapiclient'`,
+and then burned the rest of the turn trying to self-heal: `pip install` (no `pip` in that
+interpreter), `curl -Ls https://astral.sh/uv/install.sh | sh` (blocked on a pending security
+approval), `apt-get install` (permission denied, not root), `pip3` (not found). Every one of
+those attempts is logged as a distinct failed tool call — the agent never once tried plain
+`python`, which was sitting there working the entire time.
+
+**Fix:** `02-install-hermes.sh` now installs the identical wrapper under both names:
+
+```sh
+for bin in python python3; do
+  cat > "/usr/local/bin/$bin" <<'EOF'
+#!/bin/sh
+exec /usr/local/lib/hermes-agent/venv/bin/python "$@"
+EOF
+  chmod 755 "/usr/local/bin/$bin"
+done
+```
+
+Verified post-fix: `sudo -u robert env PATH=/usr/local/bin:/usr/bin:/bin python3 -c "import
+googleapiclient"` succeeds. Same symlink caveat as the original `python` fix applies to both
+names — a symlink resolves through to `uv`'s interpreter shim, which then can't see the venv
+site-packages; only `exec`-ing the venv's own interpreter by path works.
+
+**Considered and rejected: routing `python`/`python3` through `uv` instead**, prompted by a
+reasonable question — with 4 profiles on one host, wouldn't `uv`'s shared cache save space?
+Checked before doing it: the venv is already **shared across all four profiles** (one 235 MB
+tree at `/usr/local/lib/hermes-agent/venv`, not four), so there is no
+per-profile duplication for `uv`'s cache to eliminate, and disk was never the binding
+constraint on this box anyway (19 GB disk, 9.8 GB free at time of writing; the actual scarce
+resource is RAM — see Measured footprint). Separately, `uv run` only knows what to install
+for a script that declares its dependencies via inline PEP 723 metadata or sits inside a
+`pyproject.toml` project; none of the 67 `.py` files across bundled skills do either
+(confirmed by grep) — they're plain `#!/usr/bin/env python3` scripts written to assume a
+conventional pre-populated venv. Pointing `python3` at `uv run` would very likely reproduce
+the same `ModuleNotFoundError` through a different path. (A `uv` binary does already exist
+on the host, at `/root/.hermes/bin/uv` — almost certainly what Hermes's own installer used
+to build the venv — but it's root-owned and outside the sanitized PATH the agent's shell
+tool runs with, which is very likely what actually sent the model down the failed
+`curl | sh` install attempt above rather than finding it.)
+
 ## Mobile / API access
 
 Each member's agent is also reachable directly over HTTPS via hermes-agent's built-in
@@ -313,6 +371,49 @@ config keys that don't do this:**
   documented under [Configured: voice transcription via Scaleway](#configured-voice-transcription-via-scaleway).
   Don't trust the warning either way — verify against what's actually written and, ideally,
   a live request.
+
+**Tier reliability, checked live 2026-07-27 (a real family member's "add X to my calendar"
+request surfaced this — not a synthetic test):**
+
+| Alias | Skill-driving reliability | Status |
+|---|---|---|
+| `quick` | Never — refuses outright ("I don't have the capability") | Known limitation, documented since the 2026-07-22 skills commit; `mistral-small-3.2-24b` cannot drive skills at all, at any task |
+| `medium` | Unreliable — reproduced hallucinating a tool call to a nonexistent tool literally named `google-workspace` (the skill's name, not the real `terminal` tool) with truncated/unparseable arguments, and separately just refusing ("exceeds the limitations of the functions I have been given") | **Open** — see below |
+| `smart` | Reliable — 8/8 on a read task after the `python3` fix above, and a live create-event task succeeded with a real Google Calendar link | Verified working |
+| `ultra` | Was failing **100% of all requests**, tool use or not | **Fixed** — see below |
+
+**`ultra` was completely broken, not just unreliable at skills — every single request 400'd,
+confirmed with a plain "say hi in one word":**
+
+```
+HTTP 400: payload validation: max_completion_tokens is limited to 16384 for qwen3.5-397b-a17b
+```
+
+This exact limitation was already noted in the 2026-07-22 skills commit message ("qwen3.5-397b-a17b
+rejects Hermes' requests with 'max_completion_tokens is limited to 16384'") but never actually
+fixed — `ultra` had been silently unusable since the tier system launched. Root cause: `model.max_tokens`
+was never set, so Hermes falls back to a per-provider default that exceeds Scaleway's hard cap for
+this specific model. Confirmed via source (`gateway/run.py`) that `model.max_tokens` is checked
+*before* that fallback, and that `model_routes` has no per-alias override for it — `allowed_keys`
+there is only `model`/`provider`/`api_key`/`base_url`. Since all four tiers share the `openai-api`
+provider, the fix is necessarily global, not scoped to `ultra` alone:
+
+```bash
+hermes config set model.max_tokens 16384
+```
+
+16384 output tokens is generous enough that `quick`/`medium`/`smart` lose nothing in practice.
+Verified post-fix: `ultra` now works standalone and end-to-end through the google-workspace skill
+(correctly read back an event `smart` had just created). Rolled out to all four members
+2026-07-27; codified in `03-configure-profiles.sh`.
+
+**`medium` (`llama-3.3-70b-instruct`) remains genuinely unreliable at driving skills — this is
+model capability, not a config bug, and no config-level fix was found.** Unlike `ultra`, there's
+no single wrong setting to point at: the model sometimes hallucinates a tool name that doesn't
+exist, sometimes truncates its own tool-call arguments mid-generation, sometimes just refuses.
+`smart` handled the identical prompts correctly every time. If this matters to your family,
+either point `medium` at a different Scaleway model and re-verify, or steer people who need
+skill-driven tasks (calendar, email, etc.) toward `smart` specifically.
 
 ### Configured: dynv6 + Caddy reverse proxy
 

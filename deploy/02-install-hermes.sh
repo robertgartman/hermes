@@ -86,18 +86,28 @@ ssh -o StrictHostKeyChecking=no -o IdentitiesOnly=yes -i "$SSH_KEY" "root@$HOST"
   done
   if [ -f /root/.hermes-install-done ]; then
     echo "OK: $(/usr/local/bin/hermes --version 2>&1 | head -1)"
-    # Bundled skills (google-workspace among them) invoke a bare `python`.
-    # Debian ships none, and the agent shell tool runs with a sanitized PATH
-    # (/usr/local/bin:/usr/bin:/bin:...) that excludes the Hermes venv — so the
-    # skill is simply unusable without this. A symlink does NOT work: it
-    # resolves through to the uv interpreter, which then cannot see the venv
-    # site-packages. exec the venv interpreter by its own path instead.
-    cat > /usr/local/bin/python <<"EOF"
+    # Bundled skills (google-workspace among them) invoke `python` or `python3`
+    # interchangeably — the model picks whichever name it reaches for, and
+    # both need to land on the same interpreter. Debian ships neither, and the
+    # agent shell tool runs with a sanitized PATH (/usr/local/bin:/usr/bin:/bin:...)
+    # that excludes the Hermes venv — so without this, bare `python` fails
+    # outright and bare `python3` silently resolves to the system interpreter
+    # (present on Debian, unlike `python`) with none of the skill deps
+    # installed: ModuleNotFoundError, then the agent burns its tool budget
+    # trying to self-heal via pip (no pip in that interpreter), uv (not on
+    # this PATH — see README), and apt-get (not root) before giving up.
+    # Reproduced 2026-07-27 via both the API server and the CLI directly.
+    # A symlink does NOT work for either name: it resolves through to the uv
+    # interpreter, which then cannot see the venv site-packages. exec the venv
+    # interpreter by its own path instead, for both names.
+    for bin in python python3; do
+      cat > "/usr/local/bin/$bin" <<"EOF"
 #!/bin/sh
 exec /usr/local/lib/hermes-agent/venv/bin/python "$@"
 EOF
-    chmod 755 /usr/local/bin/python
-    echo "OK: python wrapper -> venv ($(/usr/local/bin/python -V 2>&1))"
+      chmod 755 "/usr/local/bin/$bin"
+      echo "OK: $bin wrapper -> venv ($(/usr/local/bin/$bin -V 2>&1))"
+    done
   else
     echo "FAILED — journalctl -u hermes-install" >&2
     journalctl -u hermes-install --no-pager -n 20
