@@ -55,7 +55,19 @@ for i in "${!MEMBERS[@]}"; do
   if [[ ! -s "$keyfile" ]]; then
     ( umask 077 && openssl rand -hex 32 > "$keyfile" )
   fi
-  printf 'API_SERVER_ENABLED=true\nAPI_SERVER_KEY=%s\nAPI_SERVER_PORT=%s\n' \
+  # API_SERVER_CORS_ORIGINS: without this, OPTIONS /v1/models (and every
+  # other endpoint) returns 403 with no Access-Control-Allow-* headers at
+  # all. curl never notices — it isn't subject to CORS — but any client that
+  # enforces it (Chatbox routes some calls through its own
+  # cors-proxy.chatboxai.app, which emulates browser CORS behavior even for
+  # a server-to-server hop where CORS doesn't strictly apply) sees the failed
+  # preflight and aborts before the real request, surfacing as "Network
+  # Error: Failed to fetch" client-side with nothing useful server-side to
+  # debug from. `*` is fine here: the actual endpoints still require the
+  # bearer token regardless of origin — CORS and auth are orthogonal, this
+  # only affects which origins get the response headers a browser/proxy
+  # needs to not discard an otherwise-successful response.
+  printf 'API_SERVER_ENABLED=true\nAPI_SERVER_KEY=%s\nAPI_SERVER_PORT=%s\nAPI_SERVER_CORS_ORIGINS=*\n' \
     "$(cat "$keyfile")" "$port" \
     | ssh "${SSHO[@]}" "root@$HOST" "/root/configure-profile.sh $m -" \
     | sed "s/^/  [$m] /"

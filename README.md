@@ -244,6 +244,26 @@ Each hermes-agent API server stays bound to `127.0.0.1` — Caddy is the only th
 public listener, since the API server "gives full access to hermes-agent's toolset,
 including terminal commands" (its own docs' words).
 
+**`API_SERVER_CORS_ORIGINS` is required for browser-like clients, not optional.**
+Discovered 2026-07-27: `curl` testing all session never caught this, because `curl` isn't
+subject to CORS at all — it was clean the whole time from that angle. Chatbox routes some
+calls (at least its `/v1/models` fetch) through its own `cors-proxy.chatboxai.app` backend,
+which emulates browser CORS enforcement even though this specific hop is server-to-server
+and CORS strictly doesn't apply there. Without `API_SERVER_CORS_ORIGINS` set,
+`OPTIONS /v1/models` returns `403` with **no** `Access-Control-Allow-*` headers at all —
+Chatbox reads that as a failed preflight and aborts before ever sending the real request,
+surfacing client-side as `Network Error: Failed to fetch (cors-proxy.chatboxai.app)` with
+nothing informative to debug from server-side (no request even reaches the access log).
+Symptom looked like two separate problems — a network error, and the model tier aliases
+appearing to not work / "cannot switch models" — but both traced back to this one cause:
+Chatbox's model list never refreshed past its original single-model cache because the
+listing call kept failing the same preflight.
+
+Fixed with `API_SERVER_CORS_ORIGINS=*` in `04-enable-api-server.sh`. `*` is fine here —
+CORS and bearer-token auth are orthogonal; every endpoint still requires the token
+regardless of origin, this setting only controls which origins get the response headers a
+browser/proxy needs to not discard an otherwise-successful response.
+
 ### Model tier aliases
 
 The API server (and only the API server — see below) exposes four named model tiers via
