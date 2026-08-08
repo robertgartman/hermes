@@ -65,7 +65,7 @@ Debian 13.
 | | All four gateways + SearXNG running |
 |---|---|
 | Per gateway RSS | 133–191 MB observed across deployment stages |
-| SearXNG | 146 MB warmed; 256 MiB hard cap; 128-PID cap |
+| SearXNG | ~140 MB warmed; 256 MiB hard cap; 128-PID cap |
 | Total used | 1.1 GB / 1968 MB |
 | Available | ~860 MB |
 | Swap used | 0 (2 GB swapfile configured) |
@@ -102,16 +102,14 @@ non-EU provider.
 
 ## Web queries: SearXNG + Tavily
 
-Web search is live for all four profiles through one private SearXNG instance. Page
-extraction is designed to use Tavily separately, but remains disabled until a Tavily API
-key is supplied; the deployment script does not claim extraction is available merely
-because `web_extract` exists in Hermes' tool schema.
+Web search and page extraction are live for all four profiles. Search uses one private
+SearXNG instance; extraction uses Tavily independently, so Hermes can fetch page content
+without asking the main model to browse or summarize it.
 
 ```yaml
 # ~/.hermes/config.yaml
 web:
   search_backend: searxng
-  # Added automatically after a Tavily key is supplied:
   extract_backend: tavily
 
 auxiliary:
@@ -122,7 +120,7 @@ auxiliary:
 ```bash
 # ~/.hermes/.env
 SEARXNG_URL=http://127.0.0.1:8888
-TAVILY_API_KEY=<added only when configured>
+TAVILY_API_KEY=<shared Tavily key>
 ```
 
 The shared backend is [`hermes-searxng.service`](deploy/hermes-searxng.service):
@@ -135,17 +133,22 @@ The shared backend is [`hermes-searxng.service`](deploy/hermes-searxng.service):
   container bridge's DNS/egress; `GRANIAN_HOST=127.0.0.1` and `SEARXNG_PORT=8888` keep the
   host-networked process private without adding forwarding exceptions.
 - Container memory and total swap are both capped at 256 MiB, which means no container
-  swap; PID count is capped at 128. Measured warmed usage after live searches: ~146 MB.
+  swap; PID count is capped at 128. Measured warmed usage after live searches: ~140 MB.
 
-The service was deployed and verified on 2026-08-08 in three layers: its listener existed
+The service was deployed and verified on 2026-08-08 in four layers: its listener existed
 only on `127.0.0.1:8888`; direct `web_search_tool` calls returned three real results for
-each of Robert, Sofia, Mattis, and Love; and a public API-server request using the
-`default` model called search and returned the current official SearXNG documentation URL.
+each of Robert, Sofia, Mattis, and Love; direct Tavily extraction returned the content of
+`https://example.com/`; and a public API-server request using the `default` model called
+`web_extract` and correctly reported the page's title and text. Configuration read-back
+confirmed `search_backend: searxng`, `extract_backend: tavily`, and
+`auxiliary.web_extract.reasoning_effort: none` for all four profiles.
 
-To finish Tavily extraction, save the key locally at
-`~/.hermes-family-keys/tavily.key` (mode 600) and rerun step 6. The script copies the
-credential through stdin, never argv, sets `web.extract_backend: tavily`, restarts each
-gateway, and preserves the already-working SearXNG search configuration.
+The pinned Hermes version logs this successful Tavily response as a tool error because
+its generic status detector matches the nested JSON field `"error": null`. This is a
+display/logging false positive: both the direct result and the model-visible API response
+contained the extracted page. The Tavily key remains at
+`~/.hermes-family-keys/tavily.key` (mode 600); step 6 copies it through stdin, never argv,
+and is safe to rerun after rotation.
 
 ## Messaging channels — no web interface needed
 
@@ -555,11 +558,10 @@ production Let's Encrypt certs. Traps that cost time getting here:
    3-year request is rejected regardless of the org setting. Keys expire and must be
    rotated annually; no automation exists yet.
 
-7. ~~**No web-search backend configured.**~~ **SEARCH RESOLVED 2026-08-08:** all profiles
-   use the shared private SearXNG service documented above. Tavily page extraction is
-   implemented in the deployment script but awaits the API key. Browser automation,
-   image generation, and TTS still have no backend. STT remains the separately configured
-   Scaleway path documented above.
+7. ~~**No web-query backends configured.**~~ **RESOLVED 2026-08-08:** all profiles use
+   the shared private SearXNG service for search and Tavily for page extraction, as
+   documented above. Browser automation, image generation, and TTS still have no backend.
+   STT remains the separately configured Scaleway path documented above.
 
 ## Operational notes
 
