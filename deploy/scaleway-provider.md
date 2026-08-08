@@ -21,7 +21,7 @@ OPENAI_BASE_URL=https://api.scaleway.ai/v1
 ```yaml
 model:
   provider: openai-api
-  default: mistral-small-3.2-24b-instruct-2506
+  default: qwen3.5-397b-a17b
 ```
 
 ### Do NOT use `provider: custom`

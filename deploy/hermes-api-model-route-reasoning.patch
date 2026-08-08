@@ -1,0 +1,149 @@
+diff --git a/gateway/platforms/api_server.py b/gateway/platforms/api_server.py
+index 43c348680..a1d47453f 100644
+--- a/gateway/platforms/api_server.py
++++ b/gateway/platforms/api_server.py
+@@ -1751,7 +1751,8 @@ class APIServerAdapter(BasePlatformAdapter):
+     def _parse_model_routes(raw: Any) -> Dict[str, Dict[str, Any]]:
+         """Validate and normalize the ``model_routes`` config block.
+ 
+-        Accepts a mapping of ``alias -> {model, provider?, api_key?, base_url?}``.
++        Accepts a mapping of
++        ``alias -> {model, provider?, api_key?, base_url?, reasoning_effort?}``.
+         Invalid shapes are dropped (never raised) so a config typo can't take
+         the whole API server down.  Route values are coerced to strings.
+ 
+@@ -1770,7 +1771,19 @@ class APIServerAdapter(BasePlatformAdapter):
+                 )
+             return {}
+ 
+-        allowed_keys = ("model", "provider", "api_key", "base_url")
++        allowed_keys = (
++            "model", "provider", "api_key", "base_url", "reasoning_effort",
++        )
++        allowed_reasoning_efforts = {
++            "none",
++            "minimal",
++            "low",
++            "medium",
++            "high",
++            "xhigh",
++            "max",
++            "ultra",
++        }
+         routes: Dict[str, Dict[str, Any]] = {}
+         for alias, cfg in raw.items():
+             alias_str = str(alias).strip()
+@@ -1789,6 +1802,18 @@ class APIServerAdapter(BasePlatformAdapter):
+                     "api_server model_routes: route %r has no 'model'; dropping", alias_str
+                 )
+                 continue
++            if route.get("reasoning_effort"):
++                effort = route["reasoning_effort"].lower()
++                if effort not in allowed_reasoning_efforts:
++                    logger.warning(
++                        "api_server model_routes: route %r has invalid reasoning_effort %r; "
++                        "using the global/provider default",
++                        alias_str,
++                        route["reasoning_effort"],
++                    )
++                    route.pop("reasoning_effort", None)
++                else:
++                    route["reasoning_effort"] = effort
+             routes[alias_str] = route
+         return routes
+ 
+@@ -1847,8 +1872,8 @@ class APIServerAdapter(BasePlatformAdapter):
+ 
+         ``route`` is an optional ``model_routes`` entry (per-client model
+         routing).  When set — and no session ``/model`` override exists for
+-        this session — its model/provider/api_key/base_url override the
+-        global defaults for this agent instance only.
++        this session — its model/provider/api_key/base_url/reasoning_effort
++        override the global defaults for this agent instance only.
+         """
+         from run_agent import AIAgent
+         from gateway.run import (
+@@ -1863,6 +1888,7 @@ class APIServerAdapter(BasePlatformAdapter):
+ 
+         runtime_kwargs = _resolve_runtime_agent_kwargs()
+         reasoning_config = GatewayRunner._load_reasoning_config()
++        request_overrides: Dict[str, Any] = {}
+         model = _resolve_gateway_model()
+ 
+         # When the primary provider's auth fails (expired token / 429 quota
+@@ -1911,10 +1937,19 @@ class APIServerAdapter(BasePlatformAdapter):
+                 runtime_kwargs["api_key"] = route["api_key"]
+             if route.get("base_url"):
+                 runtime_kwargs["base_url"] = route["base_url"]
++            if route.get("reasoning_effort"):
++                from hermes_constants import parse_reasoning_effort
++
++                reasoning_config = parse_reasoning_effort(route["reasoning_effort"])
++                # OpenAI-compatible providers such as Scaleway expect this as
++                # a top-level request field. request_overrides is applied last
++                # by the transport, after provider-specific defaults.
++                request_overrides["reasoning_effort"] = route["reasoning_effort"]
+             logger.debug(
+-                "api_server model route applied: model=%s provider=%s",
++                "api_server model route applied: model=%s provider=%s reasoning_effort=%s",
+                 model,
+                 runtime_kwargs.get("provider"),
++                route.get("reasoning_effort") or "default",
+             )
+         elif route and session_override:
+             logger.debug(
+@@ -1949,6 +1984,7 @@ class APIServerAdapter(BasePlatformAdapter):
+             session_db=self._ensure_session_db(),
+             fallback_model=fallback_model,
+             reasoning_config=reasoning_config,
++            request_overrides=request_overrides or None,
+             gateway_session_key=gateway_session_key,
+         )
+         return agent
+diff --git a/tests/gateway/test_api_server.py b/tests/gateway/test_api_server.py
+index 53beee7fc..3f1a4113c 100644
+--- a/tests/gateway/test_api_server.py
++++ b/tests/gateway/test_api_server.py
+@@ -4447,6 +4447,16 @@ class TestModelRoutesParsing:
+         )
+         assert adapter._model_routes["a"] == {"model": "m", "provider": "p"}
+ 
++    def test_reasoning_effort_is_normalized_and_invalid_values_are_stripped(self):
++        adapter = _make_routing_adapter(
++            {
++                "quick": {"model": "m", "reasoning_effort": "NONE"},
++                "invalid": {"model": "m", "reasoning_effort": "fastest"},
++            }
++        )
++        assert adapter._model_routes["quick"]["reasoning_effort"] == "none"
++        assert "reasoning_effort" not in adapter._model_routes["invalid"]
++
+     def test_resolve_route_lookup(self):
+         adapter = _make_routing_adapter({"minimax-m2": {"model": "minimax/minimax-m1"}})
+         assert adapter._resolve_route("minimax-m2") == {"model": "minimax/minimax-m1"}
+@@ -4609,6 +4619,25 @@ class TestModelRoutesAgentCreation:
+         assert captured["provider"] == "otherprov"
+         assert captured["api_key"] == "sk-otherprov"
+ 
++    def test_route_reasoning_effort_overrides_global_and_reaches_wire(self, monkeypatch):
++        captured = {}
++
++        class FakeAgent:
++            def __init__(self, **kwargs):
++                captured.update(kwargs)
++
++        _patch_create_agent_runtime(monkeypatch, captured, FakeAgent)
++        adapter = _make_routing_adapter(
++            {"quick": {"model": "qwen3.5-397b-a17b", "reasoning_effort": "none"}}
++        )
++        monkeypatch.setattr(adapter, "_ensure_session_db", lambda: None)
++        monkeypatch.setattr(adapter, "_session_model_override_for", lambda *_: None)
++
++        adapter._create_agent(session_id="s1", route=adapter._resolve_route("quick"))
++
++        assert captured["reasoning_config"] == {"enabled": False}
++        assert captured["request_overrides"] == {"reasoning_effort": "none"}
++
+     def test_no_route_keeps_global_model(self, monkeypatch):
+         captured = {}
+ 

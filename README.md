@@ -80,13 +80,13 @@ Note the README's original "2 vCPU / 4 GB starter" spec matches no cheap x64 SKU
 ## Inference: Scaleway Generative APIs
 
 EU-hosted, OpenAI-compatible, verified end-to-end through Hermes for all four members.
-Measured upstream latency: **57 ms**. 18 models available.
+Measured upstream latency: **57 ms**.
 
 ```yaml
 # ~/.hermes/config.yaml
 model:
   provider: openai-api        # NOT "custom" — see scaleway-provider.md
-  default: mistral-small-3.2-24b-instruct-2506
+  default: qwen3.5-397b-a17b
 ```
 ```bash
 # ~/.hermes/.env  (mode 600, owned by that member)
@@ -146,7 +146,8 @@ below.
 ### Configured: voice transcription via Scaleway
 
 Verified end-to-end on 2026-07-26 against real Discord voice messages from Mattis (not
-synthesized test audio) — transcript came back correct both times ("Hello.").
+synthesized test audio) — transcript came back correct both times ("Hello."). Reverified
+through the deployed `scaleway` command provider on 2026-08-08 after the Qwen tier update.
 
 **Root cause of the original failure:** `stt.provider` defaulted to `local`, which needs
 `faster-whisper` installed or a `HERMES_LOCAL_STT_COMMAND` — neither existed on this host.
@@ -176,6 +177,8 @@ Hermes just runs the shell command:
 ```yaml
 # ~/.hermes/config.yaml, set via `hermes config set` (see 03-configure-profiles.sh)
 stt:
+  enabled: true
+  echo_transcripts: true
   provider: scaleway
   providers:
     scaleway:
@@ -188,6 +191,23 @@ stt:
       format: txt
       timeout: 60
 ```
+
+Hermes also has a built-in `stt.provider: local` path backed by `faster-whisper`, but this
+deployment deliberately does not use it. `faster-whisper` is not installed by the pinned
+system build, and the local model is cached for the life of each gateway process. Four
+separate gateways would therefore hold four model instances on a 2 GB host whose services
+are capped at 320 MB each. The proposed `stt.local.vad` and
+`stt.local.unload_after_idle_seconds` settings are not implemented by the pinned Hermes
+version; only `model` and `language` are consumed from `stt.local`. Hosted Scaleway STT
+keeps those weights off the VPS while still feeding the transcript into the same Hermes
+agent pipeline.
+
+The proposed `voice.*` block is valid, but it controls microphone recording in an
+interactive Hermes CLI/TUI running on the machine with the microphone. It is not needed
+for inbound Discord/Telegram/WhatsApp voice messages on this headless VPS. Also, Hermes'
+API server does not proxy an OpenAI-compatible `/v1/audio/transcriptions` route: messaging
+audio is transcribed inside the gateway, while an API client that specifically needs a
+standalone transcription endpoint must call Scaleway's endpoint directly.
 
 **A second gotcha, caught by testing against a real cached voice file before trusting the
 config:** Scaleway's `/v1/audio/transcriptions` endpoint ignores `response_format=text` and
@@ -324,29 +344,44 @@ browser/proxy needs to not discard an otherwise-successful response.
 
 ### Model tier aliases
 
-The API server (and only the API server — see below) exposes four named model tiers via
-`GET /v1/models`, so family members pick `quick` / `medium` / `smart` / `ultra` in Chatbox
-without needing to know Scaleway model names or their tradeoffs:
+The API server (and only the API server — see below) exposes three named model tiers via
+`GET /v1/models`, so family members pick `quick` / `default` / `smart` in Chatbox.
+All three use the same model and vary only its reasoning effort:
 
-| Alias | Model | Why |
+| Alias | Model | `reasoning_effort` |
 |---|---|---|
-| `quick` | `mistral-small-3.2-24b-instruct-2506` | Smallest general instruct model, fastest |
-| `medium` | `llama-3.3-70b-instruct` | Well-established 70B, solid middle tier |
-| `smart` | `mistral-medium-3.5-128b` | The deployment's own default — see the `03-configure-profiles.sh` note on why `small` can't drive skills |
-| `ultra` | `qwen3.5-397b-a17b` | Largest model in the Scaleway catalog by parameter count (397B) — a size heuristic, not a benchmarked ranking; least-confident pick of the four |
+| `quick` | [`qwen3.5-397b-a17b`](https://console.scaleway.com/generative-api/models/playground?modelName=qwen3.5-397b-a17b) | `none` |
+| `default` | [`qwen3.5-397b-a17b`](https://console.scaleway.com/generative-api/models/playground?modelName=qwen3.5-397b-a17b) | `medium` |
+| `smart` | [`qwen3.5-397b-a17b`](https://console.scaleway.com/generative-api/models/playground?modelName=qwen3.5-397b-a17b) | `high` |
 
-Picked 2026-07-26 from Scaleway's then-current 18-model catalog. **Alias names are the
-stable contract** — swap the model behind a tier in `03-configure-profiles.sh`
-(`ALIAS_QUICK` / `ALIAS_MEDIUM` / `ALIAS_SMART` / `ALIAS_ULTRA`) as better options appear;
-nobody using the alias needs to relearn anything. Verified two ways, not just listed:
+**Alias names are the stable contract.** The shared backend and effort levels live in
+`03-configure-profiles.sh` (`ALIAS_MODEL` / `EFFORT_QUICK` / `EFFORT_DEFAULT` /
+`EFFORT_SMART`). Re-running the script also removes the superseded `medium` and `ultra`
+routes from existing profiles.
+
+[Scaleway accepts](https://www.scaleway.com/en/docs/generative-apis/reference-content/supported-models/#qwen35-397b-a17b)
+`none`, `low`, `medium`, and `high` for this model. The
+[Hermes configuration docs](https://hermes-agent.nousresearch.com/docs/user-guide/configuration)
+show global, per-model, auxiliary-task, and session reasoning controls. They also call out
+MoA as a special case: effort remains configured separately in each reference model's and
+the aggregator's own slot. Upstream `model_routes` accepts only
+model/provider/credential fields, so the deployment applies
+[hermes-api-model-route-reasoning.patch](deploy/hermes-api-model-route-reasoning.patch), a
+narrow extension that accepts a route-level `reasoning_effort`, validates it, updates
+Hermes' internal reasoning config, and forwards the value as Scaleway's top-level request
+field. It does not alter auxiliary tasks or MoA.
+
+The reasoning-based mapping was deployed and verified on 2026-08-08. All four public model
+lists contained only `quick`, `default`, and `smart`; live calls succeeded for every profile.
+Robert's recorded API sessions confirmed the effective reasoning configs as disabled,
+`medium`, and `high`, respectively. These are the repeatable checks:
 
 ```bash
 # 1. Appears in the model list
 curl https://1.agent-hermes.dynv6.net/v1/models -H "Authorization: Bearer $(cat ~/.hermes-family-keys/api-server/robert.key)"
 
-# 2. Actually routes to the right backend model (checked via the agent log,
-#    not just a 200 response) — a request with "model": "quick" logged
-#    model=mistral-small-3.2-24b-instruct-2506 on the Scaleway call
+# 2. Confirm via the agent log (not just a 200 response) that a request with
+#    "model": "quick" logs model=qwen3.5-397b-a17b reasoning_effort=none
 curl https://1.agent-hermes.dynv6.net/v1/chat/completions \
   -H "Authorization: Bearer $(cat ~/.hermes-family-keys/api-server/robert.key)" \
   -H "Content-Type: application/json" \
@@ -356,64 +391,39 @@ curl https://1.agent-hermes.dynv6.net/v1/chat/completions \
 **This is a separate mechanism from `model.default` above, easy to confuse with two other
 config keys that don't do this:**
 
-- `platforms.api_server.extra.model_routes.<alias>.{model,provider}` — the real key. Not
-  reliably documented anywhere findable by search; found by grepping the installed
-  package's own source (`gateway/platforms/api_server.py`) directly.
+- `platforms.api_server.extra.model_routes.<alias>.{model,provider,reasoning_effort}` —
+  the deployed key. `model` and `provider` are upstream; `reasoning_effort` is supplied by
+  the narrow deployment patch described above.
 - `model_catalog.<name>.*` and `model_aliases.<name>.*` — both dead ends, tried first. Both
   are "recognized" by `hermes config set` (no warning), but neither actually resolves as a
   callable model via `model.default` or the `-m` CLI flag (`HTTP 422: model 'x' not
   found` — confirmed on the live host, not assumed). These may govern something else
   entirely, or nothing yet; they are not the API-server model-tier mechanism regardless.
 - `hermes config set`'s "not a recognized config key" warning is noise specifically for
-  `platforms.api_server.extra.model_routes.<alias>.*` — every key under it triggers
+  `platforms.api_server.extra.model_routes.<alias>.*` — these dynamic keys may trigger
   `Did you mean: stt.provider` because the validator doesn't know about dynamically-named
   entries. The value is still written correctly; this is the same false-positive pattern
   documented under [Configured: voice transcription via Scaleway](#configured-voice-transcription-via-scaleway).
   Don't trust the warning either way — verify against what's actually written and, ideally,
   a live request.
 
-**Tier reliability, checked live 2026-07-27 (a real family member's "add X to my calendar"
-request surfaced this — not a synthetic test):**
-
-| Alias | Skill-driving reliability | Status |
-|---|---|---|
-| `quick` | Never — refuses outright ("I don't have the capability") | Known limitation, documented since the 2026-07-22 skills commit; `mistral-small-3.2-24b` cannot drive skills at all, at any task |
-| `medium` | Unreliable — reproduced hallucinating a tool call to a nonexistent tool literally named `google-workspace` (the skill's name, not the real `terminal` tool) with truncated/unparseable arguments, and separately just refusing ("exceeds the limitations of the functions I have been given") | **Open** — see below |
-| `smart` | Reliable — 8/8 on a read task after the `python3` fix above, and a live create-event task succeeded with a real Google Calendar link | Verified working |
-| `ultra` | Was failing **100% of all requests**, tool use or not | **Fixed** — see below |
-
-**`ultra` was completely broken, not just unreliable at skills — every single request 400'd,
-confirmed with a plain "say hi in one word":**
+**`qwen3.5-397b-a17b` requires an explicit output-token cap.** Without it, requests fail
+with:
 
 ```
 HTTP 400: payload validation: max_completion_tokens is limited to 16384 for qwen3.5-397b-a17b
 ```
 
-This exact limitation was already noted in the 2026-07-22 skills commit message ("qwen3.5-397b-a17b
-rejects Hermes' requests with 'max_completion_tokens is limited to 16384'") but never actually
-fixed — `ultra` had been silently unusable since the tier system launched. Root cause: `model.max_tokens`
-was never set, so Hermes falls back to a per-provider default that exceeds Scaleway's hard cap for
-this specific model. Confirmed via source (`gateway/run.py`) that `model.max_tokens` is checked
-*before* that fallback, and that `model_routes` has no per-alias override for it — `allowed_keys`
-there is only `model`/`provider`/`api_key`/`base_url`. Since all four tiers share the `openai-api`
-provider, the fix is necessarily global, not scoped to `ultra` alone:
+Hermes otherwise falls back to a per-provider default above Scaleway's hard cap. Confirmed
+via source (`gateway/run.py`) that `model.max_tokens` is checked before that fallback, and
+that `model_routes` has no per-alias token-limit override. The global setting used by all
+three tiers is:
 
 ```bash
 hermes config set model.max_tokens 16384
 ```
 
-16384 output tokens is generous enough that `quick`/`medium`/`smart` lose nothing in practice.
-Verified post-fix: `ultra` now works standalone and end-to-end through the google-workspace skill
-(correctly read back an event `smart` had just created). Rolled out to all four members
-2026-07-27; codified in `03-configure-profiles.sh`.
-
-**`medium` (`llama-3.3-70b-instruct`) remains genuinely unreliable at driving skills — this is
-model capability, not a config bug, and no config-level fix was found.** Unlike `ultra`, there's
-no single wrong setting to point at: the model sometimes hallucinates a tool name that doesn't
-exist, sometimes truncates its own tool-call arguments mid-generation, sometimes just refuses.
-`smart` handled the identical prompts correctly every time. If this matters to your family,
-either point `medium` at a different Scaleway model and re-verify, or steer people who need
-skill-driven tasks (calendar, email, etc.) toward `smart` specifically.
+This is codified in `03-configure-profiles.sh` and was verified live on 2026-08-08.
 
 ### Configured: dynv6 + Caddy reverse proxy
 
@@ -496,12 +506,12 @@ production Let's Encrypt certs. Traps that cost time getting here:
    3-year request is rejected regardless of the org setting. Keys expire and must be
    rotated annually; no automation exists yet.
 
-7. **No tool backend configured (web search, browser, image gen, TTS) — for any member,
-   on any channel, not just the API server.** Chat works because it only needs the model
-   provider (Scaleway, already configured). Confirmed by grepping all four `.env`/
-   `config.yaml`: no `FIRECRAWL_API_KEY`, `BROWSERBASE_API_KEY`, `FAL_KEY`,
-   `ELEVENLABS_API_KEY`, no Nous Portal setup. This is the same root cause as the
-   already-documented "voice messages do not work" gap. Two paths, needs a decision:
+7. **No tool backend configured for web search, browser, image generation, or TTS — for
+   any member, on any channel, not just the API server.** STT is the exception: inbound
+   voice transcription is configured and verified through Scaleway as documented above.
+   Chat works because it only needs the model provider. Confirmed by grepping all four
+   `.env`/`config.yaml`: no `FIRECRAWL_API_KEY`, `BROWSERBASE_API_KEY`, `FAL_KEY`,
+   `ELEVENLABS_API_KEY`, no Nous Portal setup. Two paths need a decision:
    a [Nous Portal](https://hermes-agent.nousresearch.com/docs/user-guide/features/api-server)
    subscription (bundles 300+ models + web/image/TTS/browser via one Tool Gateway — but
    check whether it can supply *only* tools while `model.provider` stays pinned to
