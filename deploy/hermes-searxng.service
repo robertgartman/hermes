@@ -1,0 +1,47 @@
+[Unit]
+Description=Private SearXNG backend for Hermes
+Documentation=https://docs.searxng.org/admin/installation-docker.html
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+
+# Rootful Podman is intentional: it has no resident daemon, while systemd owns
+# lifecycle and restart policy. Host networking avoids firewall-forwarding
+# exceptions; GRANIAN_HOST in the env file restricts the listener to loopback.
+ExecStartPre=-/usr/bin/podman rm --force hermes-searxng
+ExecStart=/usr/bin/podman run \
+  --name hermes-searxng \
+  --rm \
+  --pull=never \
+  --log-driver=journald \
+  --memory=256m \
+  --memory-swap=256m \
+  --pids-limit=128 \
+  --cap-drop=ALL \
+  --cap-add=CHOWN \
+  --cap-add=SETGID \
+  --cap-add=SETUID \
+  --cap-add=DAC_OVERRIDE \
+  --security-opt=no-new-privileges \
+  --network=host \
+  --volume=/etc/hermes-searxng:/etc/searxng:rw \
+  --env-file=/etc/hermes-searxng.env \
+  docker.io/searxng/searxng@sha256:5d6d903ab82afa56ee32792d477f36bc63d3e5ca04fcb6947e28a5cfd987fad3
+ExecStop=/usr/bin/podman stop --time=10 hermes-searxng
+ExecStopPost=-/usr/bin/podman rm --force hermes-searxng
+
+Restart=always
+RestartSec=5
+TimeoutStartSec=120
+TimeoutStopSec=30
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hermes-searxng
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,20 @@
+# Private, API-only SearXNG instance shared by the four Hermes profiles.
+# SEARXNG_SECRET is injected from /etc/hermes-searxng.env by the systemd unit;
+# this checked-in value is never used at runtime.
+use_default_settings: true
+
+general:
+  debug: false
+  instance_name: "Hermes family search"
+
+search:
+  safe_search: 1
+  formats:
+    - json
+
+server:
+  secret_key: "overridden-by-SEARXNG_SECRET"
+  limiter: false
+  public_instance: false
+  image_proxy: false
+

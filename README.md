@@ -19,6 +19,7 @@ Run in order. Steps 1–3 rebuild the entire deployment from nothing.
 | 3 | [`deploy/03-configure-profiles.sh <ip>`](deploy/03-configure-profiles.sh) | workstation → host | Installs the [gateway unit](deploy/hermes-gateway@.service), writes each member's `.env` via [`configure-profile.sh`](deploy/configure-profile.sh), points Hermes at Scaleway, starts all four gateways. |
 | 4 | [`deploy/configure-profile.sh <user> -`](deploy/configure-profile.sh) | host, per member | Add messaging channels by piping `KEY=VALUE` lines in — non-interactive, secrets never enter argv or shell history. See [Configured: Discord for Mattis](#configured-discord-for-mattis). `hermes whatsapp` / `hermes gateway setup` remain available for interactive setup over SSH — **no web UI required**. |
 | 5 | [`deploy/04-enable-api-server.sh <ip>`](deploy/04-enable-api-server.sh) | workstation → host | Optional. Enables hermes-agent's API server per member, builds and installs a Caddy reverse proxy (real Let's Encrypt certs via dynv6 DNS-01), points DNS at the host. See [Mobile / API access](#mobile--api-access). Idempotent — safe to re-run after a VPS recreate. |
+| 6 | [`deploy/05-enable-web-search.sh <ip>`](deploy/05-enable-web-search.sh) | workstation → host | Installs one private SearXNG backend shared by all profiles and optionally configures Tavily extraction when `~/.hermes-family-keys/tavily.key` exists. See [Web queries: SearXNG + Tavily](#web-queries-searxng--tavily). |
 
 Step 1 writes the four inference keys to `~/.hermes-family-keys/` (mode 600). Scaleway
 shows a secret key **once**; those files are the only copy. They never enter git.
@@ -61,13 +62,14 @@ retry forever and burn provider spend) and adds per-member memory caps.
 Scaleway **DEV1-S** — 2 vCPU / 2 GB / 20 GB local NVMe, **€6.55/mo** + IPv4, `fr-par-1`,
 Debian 13.
 
-| | Idle, all four gateways running |
+| | All four gateways + SearXNG running |
 |---|---|
-| Per gateway RSS | 133–152 MB |
-| Total used | 845 MB / 1968 MB |
-| Available | ~1.1 GB |
-| Swap used | ~0 (2 GB swapfile configured) |
-| Disk | 7.4 GB / 19 GB |
+| Per gateway RSS | 133–191 MB observed across deployment stages |
+| SearXNG | 146 MB warmed; 256 MiB hard cap; 128-PID cap |
+| Total used | 1.1 GB / 1968 MB |
+| Available | ~860 MB |
+| Swap used | 0 (2 GB swapfile configured) |
+| Disk | ~8 GB / 19 GB |
 
 DEV1-S is sufficient. Two caveats: this is **idle with no messaging platforms connected**,
 and the install itself peaks at **1.6 GB** — the tightest moment on the box. `DEV1-M`
@@ -97,6 +99,53 @@ OPENAI_BASE_URL=https://api.scaleway.ai/v1
 Auxiliary models (vision, web summarisation) default to `provider: auto`, which routes
 them to the main chat model — so they stay on Scaleway too, rather than leaking to a
 non-EU provider.
+
+## Web queries: SearXNG + Tavily
+
+Web search is live for all four profiles through one private SearXNG instance. Page
+extraction is designed to use Tavily separately, but remains disabled until a Tavily API
+key is supplied; the deployment script does not claim extraction is available merely
+because `web_extract` exists in Hermes' tool schema.
+
+```yaml
+# ~/.hermes/config.yaml
+web:
+  search_backend: searxng
+  # Added automatically after a Tavily key is supplied:
+  extract_backend: tavily
+
+auxiliary:
+  web_extract:
+    reasoning_effort: none
+```
+
+```bash
+# ~/.hermes/.env
+SEARXNG_URL=http://127.0.0.1:8888
+TAVILY_API_KEY=<added only when configured>
+```
+
+The shared backend is [`hermes-searxng.service`](deploy/hermes-searxng.service):
+
+- Official SearXNG image pinned by digest, managed by systemd through rootful Podman.
+  Podman is used because it has no resident daemon.
+- One Granian worker, JSON-only output, no image proxy, no public-instance mode.
+- `server.limiter: false`, so Valkey is unnecessary for this loopback-only service.
+- Host networking is deliberate. The host's default-drop forwarding firewall blocks a
+  container bridge's DNS/egress; `GRANIAN_HOST=127.0.0.1` and `SEARXNG_PORT=8888` keep the
+  host-networked process private without adding forwarding exceptions.
+- Container memory and total swap are both capped at 256 MiB, which means no container
+  swap; PID count is capped at 128. Measured warmed usage after live searches: ~146 MB.
+
+The service was deployed and verified on 2026-08-08 in three layers: its listener existed
+only on `127.0.0.1:8888`; direct `web_search_tool` calls returned three real results for
+each of Robert, Sofia, Mattis, and Love; and a public API-server request using the
+`default` model called search and returned the current official SearXNG documentation URL.
+
+To finish Tavily extraction, save the key locally at
+`~/.hermes-family-keys/tavily.key` (mode 600) and rerun step 6. The script copies the
+credential through stdin, never argv, sets `web.extract_backend: tavily`, restarts each
+gateway, and preserves the already-working SearXNG search configuration.
 
 ## Messaging channels — no web interface needed
 
@@ -506,19 +555,11 @@ production Let's Encrypt certs. Traps that cost time getting here:
    3-year request is rejected regardless of the org setting. Keys expire and must be
    rotated annually; no automation exists yet.
 
-7. **No tool backend configured for web search, browser, image generation, or TTS — for
-   any member, on any channel, not just the API server.** STT is the exception: inbound
-   voice transcription is configured and verified through Scaleway as documented above.
-   Chat works because it only needs the model provider. Confirmed by grepping all four
-   `.env`/`config.yaml`: no `FIRECRAWL_API_KEY`, `BROWSERBASE_API_KEY`, `FAL_KEY`,
-   `ELEVENLABS_API_KEY`, no Nous Portal setup. Two paths need a decision:
-   a [Nous Portal](https://hermes-agent.nousresearch.com/docs/user-guide/features/api-server)
-   subscription (bundles 300+ models + web/image/TTS/browser via one Tool Gateway — but
-   check whether it can supply *only* tools while `model.provider` stays pinned to
-   Scaleway, since Portal's own models would undermine the EU-residency goal this
-   deployment is built around), or per-tool bring-your-own-key (Firecrawl for web
-   search/scraping, Browserbase for browser automation, FAL for image gen, ElevenLabs or
-   OpenAI/Mistral for TTS — each independent, no Portal required).
+7. ~~**No web-search backend configured.**~~ **SEARCH RESOLVED 2026-08-08:** all profiles
+   use the shared private SearXNG service documented above. Tavily page extraction is
+   implemented in the deployment script but awaits the API key. Browser automation,
+   image generation, and TTS still have no backend. STT remains the separately configured
+   Scaleway path documented above.
 
 ## Operational notes
 
