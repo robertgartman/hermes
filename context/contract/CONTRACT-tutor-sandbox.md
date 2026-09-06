@@ -59,7 +59,8 @@ scipy, pandas, matplotlib, sympy, scikit-learn, networkx, ipywidgets, jupyterlab
 |---|---|
 | Kernel API | `http://10.89.1.10:8888` — bound `0.0.0.0` **inside the pod only** |
 | Published to host | **Nothing.** No port publishing |
-| Who may reach it | root and uids `1001-1004` (the four members), enforced by `nftables` `meta skuid` |
+| Student UI | `https://6.agent-hermes.dynv6.net` — Caddy, TLS, per-member basic auth |
+| Who may reach the kernel | root, `caddy` (999, it reverse-proxies the UI) and uids `1001-1004`, enforced by `nftables` `meta skuid` |
 | Kernel → host | Denied at `input` for `10.89.0.0/16`: **no** host port is reachable |
 
 ## Orchestration
@@ -68,13 +69,16 @@ scipy, pandas, matplotlib, sympy, scikit-learn, networkx, ipywidgets, jupyterlab
 |---|---|
 | Driver | `/opt/hermes-tutor/jupyter_exec.py`, root-owned `0644`, vendored from `deploy/tutor/` |
 | Interpreter | `/usr/local/lib/hermes-agent/venv/bin/python` — needs `websockets`, already a Hermes dependency |
-| Per-member config | `JUPYTER_TOKEN` and `JUPYTER_TUTOR_URL` in each member's own `.env` (mode 600, owned by that member) |
+| Per-member config | `JUPYTER_TOKEN`, `JUPYTER_TUTOR_URL` and `JUPYTER_TUTOR_PATH` in each member's own `.env` (mode 600, owned by that member) |
+| Per-member notebook | `work/<member>/scratch.ipynb` — **each member gets their own kernel**; verified that one member's variables raise `NameError` in another's |
 
 ## Credential Locations
 
 | Credential | Location | Mode |
 |---|---|---|
 | Jupyter server token | `/etc/hermes-tutor/jupyter-token.env` (host), root:root | 600 |
+| Per-member UI password | `/etc/hermes-tutor/lab-<member>.cred` (host), root:root | 600 |
+| bcrypt hashes + token for Caddy | `/etc/hermes-tutor/caddy-lab.env`, read by `caddy.service` | 600 |
 | Same token, per member | `/home/<member>/.hermes/.env`, owned by that member | 600 |
 
 **No model credential exists anywhere in the sandbox**, and nothing inside it runs Hermes.
@@ -102,5 +106,12 @@ scipy, pandas, matplotlib, sympy, scikit-learn, networkx, ipywidgets, jupyterlab
 - **`inet filter input`'s `policy drop` is load-bearing for the sandbox.** It is what keeps the
   kernel off host ports. Re-run SPEC-tutor-isolation VC-3 after any firewall change.
 
-- **All members currently share one notebook path**, so kernel state is shared between them.
-  Give each member a distinct `--path` if that is not wanted.
+- **Bcrypt hashes contain `$` sequences, so never `source` the Caddy env file in bash.**
+  `. caddy-lab.env` expands `$2a$14$…` as positional parameters and silently mangles the hash;
+  the symptom is Caddy failing validation with `base64-decoding password: illegal base64 data`,
+  which points at the credential rather than at the shell. systemd's `EnvironmentFile` performs
+  no expansion and is unaffected. To load it in a shell, read line by line without expanding.
+
+- **Jupyter enforces DNS-rebinding protection**, like the dashboard: without
+  `header_up Host {upstream_hostport}` every proxied request is refused. Caddy also injects the
+  server token, so members authenticate with their own password only and never handle it.

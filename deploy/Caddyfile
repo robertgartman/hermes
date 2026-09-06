@@ -125,3 +125,33 @@
 		header_up Host {upstream_hostport}
 	}
 }
+
+# 6 = the tutor's JupyterLab, for all four members.
+#
+# This publishes a CODE EXECUTION surface to the internet. It is acceptable
+# only because of what sits in front of and behind it:
+#   - basic_auth per member here (bcrypt hashes via caddy.service EnvironmentFile)
+#   - Jupyter's own token, injected below so members never handle it
+#   - the kernel runs in a container that can reach NO host port (nftables)
+#   - each member has their own notebook path, so their own kernel
+# Numeric label per ADR-006: a "jupyter." label would advertise a public
+# code-execution endpoint in Certificate Transparency logs forever.
+6.agent-hermes.dynv6.net {
+	tls {
+		dns dynv6 {env.DYNV6_API_TOKEN}
+	}
+	basic_auth {
+		robert {env.LAB_HASH_ROBERT}
+		sofia {env.LAB_HASH_SOFIA}
+		mattis {env.LAB_HASH_MATTIS}
+		love {env.LAB_HASH_LOVE}
+	}
+	reverse_proxy 10.89.1.10:8888 {
+		# Jupyter enforces DNS-rebinding protection like the dashboard does:
+		# without this it answers 403 to every proxied request.
+		header_up Host {upstream_hostport}
+		# Inject the server token so members authenticate with their own
+		# password only. The token never leaves the host.
+		header_up Authorization "token {env.LAB_TOKEN}"
+	}
+}

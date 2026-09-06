@@ -144,7 +144,8 @@ on a reinstall. See OQ-7.
 | Jupyter live-kernel skill (on family gateways) | **Seeded, inert, and must stay so** | 2026-09-06 | Present in all four homes incl. both children; prerequisites unmet. [ADR-011](adr/ADR-011-tutor-sandbox-isolation.md) **rejects** enabling it here — see OQ-8 |
 | Tutor sandbox — kernel | **Running** | 2026-09-06 | Podman pod `tutor` at static `10.89.1.10`, digest-pinned JupyterLab + the ADR-012 stack, token-authenticated, reachable only by root and the four member uids |
 | Tutor orchestration | **Live — host-side** | 2026-09-06 | The members' own gateways drive the kernel via `/opt/hermes-tutor/jupyter_exec.py`. **No second Hermes** — see [ADR-017](adr/ADR-017-single-hermes-host-orchestration.md). Verified: a member executed code and state persisted across processes |
-| Tutor — student-facing UI | **Not built** | — | No browser access to JupyterLab yet; the kernel is reachable only from member gateways |
+| Tutor — student-facing UI | **Live** | 2026-09-06 | `https://6.agent-hermes.dynv6.net`, TLS + per-member basic auth, Jupyter token injected by Caddy. Verified: no creds `401`, wrong password `401`, two members `200` |
+| Tutor — per-member kernels | **Live** | 2026-09-06 | Each member has their own notebook path and therefore their own kernel. Verified: one member's variable raises `NameError` in another's |
 
 ---
 

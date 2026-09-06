@@ -43,6 +43,7 @@ model alias names. Set by
 | Mattis | `https://3.agent-hermes.dynv6.net` | 8644 |
 | Love | `https://4.agent-hermes.dynv6.net` | 8645 |
 | Robert — **web dashboard (admin)** | `https://5.agent-hermes.dynv6.net` | 9121 |
+| All members — **tutor JupyterLab** | `https://6.agent-hermes.dynv6.net` | pod `10.89.1.10:8888` |
 
 The `5` endpoint is the Hermes web UI and is **not** a chat endpoint for the family — it is an
 admin surface serving `/env`, `/config` and `/files` from the same application as `/chat`. See
