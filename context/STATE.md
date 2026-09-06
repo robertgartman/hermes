@@ -24,6 +24,7 @@ audience: [ai, operator]
 retrieval_priority: high
 applies_to: hermes-vps fr-par-1
 related_documents:
+  - PRD-family-agent-platform
   - CONTRACT-api-server-endpoints
   - CONTRACT-hermes-config-surface
   - CONTRACT-messaging-channels
@@ -126,12 +127,13 @@ on a reinstall. See OQ-7.
 | Discord — Mattis | **Live** | 2026-07-22 | DM → gateway → allowlist → inference → reply |
 | Discord — other members | **Not configured** | — | |
 | Slack / Telegram / WhatsApp | **Not configured** | — | Deps preinstalled; no tokens set |
-| Voice transcription (STT) | **Live** | 2026-08-08 | Scaleway command provider; reverified after the Qwen tier update |
+| Voice transcription (STT) | **Live — messaging path only** | 2026-08-08 | Scaleway command provider; reverified after the Qwen tier update. Per [ADR-005](adr/ADR-005-command-stt-provider.md) the API server proxies no transcription route, so the web/API surface has no voice input |
 | Web search (SearXNG) | **Live** | 2026-08-08 | All four profiles, three real results each |
 | Page extraction (Tavily) | **Live** | 2026-08-08 | See trap in [CONTRACT-hermes-config-surface](contract/CONTRACT-hermes-config-surface.md) |
 | API server + Caddy + real certs | **Live** | 2026-08-08 | Four FQDNs, production Let's Encrypt |
 | Model alias (single `default`) | **Live** | 2026-09-06 | [ADR-009](adr/ADR-009-retire-model-tier-reasoning-patch.md) implemented. `/v1/models` returns `hermes-agent` and `default` only; `quick`/`smart` retired. Live completion through `default` returned `200`. No reasoning effort configured — Scaleway's default applies |
 | `python`/`python3` venv wrappers | **Live** | 2026-07-27 | Fixes google-workspace skill reliability |
+| Image understanding (vision input) | **Unknown — never tested** | — | No image has been sent to any member's agent on any channel. Unmeasured, **not** known-absent — see OQ-6 |
 | Browser automation | **No backend** | — | |
 | Image generation | **No backend** | — | |
 | TTS | **No backend** | — | |
@@ -211,10 +213,22 @@ Scaleway enforces API key expiry, hard-capped at **365 days** — a 3-year reque
 regardless of the org setting. Keys expire and must be rotated annually. **No automation
 exists**; see [RUNBOOK-rotate-inference-keys](runbook/RUNBOOK-rotate-inference-keys.md).
 
-### OQ-6 — Remaining backends unconfigured
+### OQ-6 — Multimodal backends: three absent, one merely untested
 
 Browser automation, image generation and TTS have no backend. Web search, extraction and STT
 are configured and live.
+
+**Image understanding does not belong in that list.** Nothing has ever sent an image to any
+member's agent, so there is no evidence in either direction — unmeasured, not known-absent.
+Two questions are open, and the second is the larger one:
+
+1. **Does an image reach the model at all?** Untested end to end, on every channel.
+2. **Does Hermes hand per-modality work to separate handlers out of the box?** Readable from
+   the pinned tree at `/usr/local/lib/hermes-agent`; not yet read. It decides whether R9–R11
+   in [PRD-family-agent-platform](prd/PRD-family-agent-platform.md) are a configuration
+   exercise or new work.
+
+Neither question needs a host change to answer — one is a message, the other is a `grep`.
 
 ### OQ-7 — The pin is 9750 commits behind and the upgrade is blocked
 
