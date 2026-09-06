@@ -91,7 +91,7 @@ All four gateways plus SearXNG running, idle.
 | Total used | **1173 MB / 3916 MB** | 1171 MB / 1968 MB | 1.1 GB / 1968 MB |
 | Available | **~2742 MB** | ~783 MB | ~860 MB |
 | Swap used | **0** of 2047 MB | ~34 MB of 2047 MB | 0 |
-| Disk | **~13.8 GB / 19 GB** (5.2 GB free) | 8.4 GB / 19 GB (9.0 free) | ~8 GB / 19 GB |
+| Disk | **~16.6 GB / 19 GB** (2.4 GB free) | 8.4 GB / 19 GB (9.0 free) | ~8 GB / 19 GB |
 | Install tree | 2.2 GB | 2.2 GB | 2.2 GB |
 
 The disk drop is the **3.87 GB** digest-pinned `scipy-notebook` image. The two SearXNG figures
@@ -285,48 +285,59 @@ SPEC-tutor-isolation VC-3 for the re-runnable check.
 and inert today, and the two host-level obstacles (`uv` absent from the member PATH, port
 `8888` already held) are unaddressed.
 
-### OQ-9 — Inference works because of an upstream bug, and that bug is now fixed upstream
+### OQ-9 — RESOLVED 2026-09-06: the wire protocol is now pinned explicitly
 
 `hermes_cli/providers.py` declares the `openai-api` provider with
-`transport="codex_responses"`. The pinned version never consults that declaration — api_mode
-comes from URL detection alone, `api.scaleway.ai` is unrecognised, and resolution falls to
-`chat_completions`, which is what this deployment needs.
+`transport="codex_responses"`. The pinned version never consults that declaration, so
+resolution fell through to `chat_completions` — which is what this deployment needs, but by
+accident. Newer versions add `_fallback_api_mode()`, which **does** consult it; on any such
+version this deployment's requests would have targeted `/v1/responses`, which Scaleway does
+not serve. That would have been total inference failure for all four members on upgrade.
 
-Upstream has since added a fallback that **does** consult the declaration. On any version
-carrying it, this deployment's requests would target `/v1/responses`, which Scaleway does not
-serve.
+**Fixed by setting `model.api_mode: chat_completions` on all four profiles and on the tutor
+orchestrator.** Source at the newer commit shows an explicit configured mode short-circuits
+the fallback entirely:
 
-**This is a standing fragility, not merely an upgrade problem** — it will surface on some
-future upgrade regardless of when one is attempted. A candidate mitigation exists
-(`model.api_mode: chat_completions`, set on all four profiles before any gateway starts on new
-code) but is **untested**, and must be proven from the outgoing request body rather than a
-`200`.
+```python
+elif configured_mode and _provider_supports_explicit_api_mode(provider, configured_provider):
+    api_mode = configured_mode        # explicit config wins
+else:
+    api_mode = _fallback_api_mode(...)  # only reached when unset
+```
 
-### OQ-10 — The tutor sandbox has a kernel but no orchestrator
+`_provider_supports_explicit_api_mode` returns True here because the configured provider
+matches the runtime provider. Verified after applying: all four gateways restarted clean and
+a live completion through the API returned content.
 
-The kernel half is built and its isolation checks pass
-([EPHEMERAL-tutor-sandbox-build-2026-09-06](ephemeral/EPHEMERAL-tutor-sandbox-build-2026-09-06.md)).
-**There is no tutor**, because [ADR-010](adr/ADR-010-hermes-outside-the-jupyter-kernel.md)
-puts Hermes outside the kernel as an API client and that service does not exist. Two things
-gate it:
+**Honest limit:** the *fix* is verified live on the current version, where it is a no-op that
+changes nothing. The *failure it prevents* was traced through source at the newer commit but
+**never reproduced** — a live test needs an image this host currently has no disk for. Treat
+the protection as sound but the failure mode as inferred.
 
-1. **Pod egress needs a firewall change.** `inet filter forward` is `policy drop`, so bridge
-   containers have no egress; the orchestrator cannot reach Scaleway. Additive `forward`
-   accepts plus NAT masquerade were prepared but **not applied** — the change was refused by
-   operator tooling and needs explicit authorisation.
-2. **The orchestrator needs a model credential**, which is a provisioning decision — a new
-   Scaleway IAM application per the existing per-member pattern, or reuse of an existing key.
-   Undecided.
 
-**A consequence to decide deliberately, not inherit:** pod members share a network namespace,
-so giving the orchestrator egress also gives the **student kernel** internet access. The SPEC
-does not forbid it, but it governs what a child's code may reach.
+### OQ-11 — Disk, not memory, is now the binding constraint
 
-**Also load-bearing and easy to break by accident:** `inet filter input` is `policy drop` with
-only `22`/`443` open, and that is what keeps the pod off host ports `8642-8645`/`8888` once
-egress exists. FR-3 depends on it. A future firewall edit for an unrelated reason could remove
-it silently.
+The resize solved memory (~2.7 GB available) but the tutor's images consumed the disk. On
+2026-09-06 a routine image pull **failed with "no space left on device"**, briefly leaving
+194 MB free on a host running four family agents. Cleanup recovered it to ~2.4 GB and no
+service was harmed, but the margin is thin.
 
+| | |
+|---|---|
+| Volume | 19 GB total |
+| Container storage | **~14 GB** |
+| Hermes install | 2.2 GB |
+| Free | ~2.4 GB |
+
+Largest items: `scipy-notebook` 3.87 GB and `hermes-agent:v2026.7.20` 2.68 GB unpacked.
+
+**This contradicts the standing guidance in [AGENTS.md](../AGENTS.md) that "RAM is the binding
+constraint, not disk or CPU."** That was true on DEV1-S before the tutor existed; it is no
+longer true. Anything that pulls another image — including testing an upgrade candidate —
+needs headroom first.
+
+Options, undecided: prune unused images, attach a Scaleway block volume, or move the tutor to
+its own host as [ADR-011](adr/ADR-011-tutor-sandbox-isolation.md) contemplated.
 
 ---
 
