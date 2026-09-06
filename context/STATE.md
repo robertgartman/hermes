@@ -203,11 +203,39 @@ Every figure above is idle with no channels connected. `MemoryMax=320M` per memb
 comfortable now but untested against live Slack/Discord/WhatsApp clients and concurrent
 conversations.
 
-### OQ-4 — Child-safety controls not configured
+### OQ-4 — Child-safety controls: one real boundary added, the rest still open
 
-**The most significant open gap.** Mattis and Love get agents that can execute shell
-commands. Approval mode, tool restrictions and skill pruning have not been set. 78 bundled
-skills are seeded per member by default, most irrelevant for a family.
+**The most significant open gap, now partially addressed.** Mattis and Love have agents that
+execute shell commands.
+
+**The finding that reframes this question.** Every constraint Hermes offers — approval modes,
+tool allowlists, disabled toolsets, skill removal — is read from `~/.hermes/config.yaml` or
+`~/.hermes/.env`. **Both files are owned by the member and writable by that member's own
+shell.** An agent that wants a restriction gone can remove it. Per
+[ADR-001](adr/ADR-001-one-os-user-per-member.md) and
+[SPEC-profile-isolation](spec/SPEC-profile-isolation.md) INV-1, **none of it may be recorded
+against this question as the control.** It is defence in depth and must be described that way.
+
+**Closed 2026-09-06 — cross-member network isolation.** Each member's API server was
+reachable by every other member on shared loopback, refused only by a bearer token. That is
+exactly the application-level dependency INV-1 forbids. Per-uid `nftables` rules now refuse it
+in the kernel. Verified as a full 4×4 matrix: own port `401`, all twelve cross-member
+combinations `000`, Caddy still proxying all five public endpoints. Captured as **FR-6 / VC-6**
+in SPEC-profile-isolation, including that the same matrix returned `401` everywhere before.
+
+**Still open, and the remaining items need decisions rather than research:**
+
+1. **Both children have a public HTTPS endpoint** (`3.` and `4.`) whose toolset bundle
+   `hermes-api-server` includes `terminal`, `process` and file read/write. Restricting Discord
+   alone would not touch it — every platform's toolset key is independent. Removing the two
+   children's endpoints entirely is the only *boundary-grade* option; anything else is
+   configuration they can edit.
+2. **Skill pruning is unverified.** 78 bundled skills are seeded per child, including
+   categories plainly unsuitable for a 10–16 year old. Whether deleting them is durable, or
+   whether a restart re-seeds them, was **not** established on the host — and if they are
+   re-seeded, pruning is theatre.
+3. **The `/yolo` slash command is currently available to both children**, because slash-command
+   gating stays inert until an admin allowlist has at least one entry.
 
 ### OQ-5 — Key rotation
 

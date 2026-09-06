@@ -49,6 +49,10 @@ surface — see [SPEC-agent-access-control](SPEC-agent-access-control.md).
   member's home directory.
 - **FR-5** — Per-member Hermes state (`.env`, `config.yaml`, `state.db`, sessions, memories)
   resides only under that member's home.
+- **FR-6** — A member's gateway must not be able to reach another member's API server. The
+  four servers bind loopback, which is **shared** by every gateway, so this cannot be left to
+  the bearer token.
+
 
 ## Invariants
 
@@ -131,3 +135,28 @@ surface — see [SPEC-agent-access-control](SPEC-agent-access-control.md).
 > gaps: properties true by construction, not yet asserted as re-runnable checks. They should
 > become explicit assertions in the deploy scripts so a VPS recreate re-proves them rather
 > than re-assuming them.
+
+- **VC-6** (Verifies FR-6, INV-1): Given all four gateways running, when each member's user
+  attempts to reach every member's API-server port on loopback, then only its own answers and
+  the other three refuse at the network layer.
+  *Check:* for each member user, connect to `127.0.0.1:8642-8645`; expect an HTTP status from
+  its own port only, and no connection to the other three.
+  ```bash
+  for u in robert sofia mattis love; do
+    for p in 8642 8643 8644 8645; do
+      printf '%s -> %s : ' "$u" "$p"
+      sudo -u "$u" curl -sS -m 5 -o /dev/null -w '%{http_code}\n' "http://127.0.0.1:$p/v1/models"
+    done
+  done
+  ```
+  *Observed:* **PASS, 2026-09-06.** A full 4x4 matrix: each member's own port returned `401`
+  (reachable, auth-challenged) and **all twelve cross-member combinations returned `000`** —
+  refused before any HTTP exchange. Caddy continued to proxy all five public endpoints, so
+  the rule discriminates by uid rather than blocking the port outright.
+
+  **Before this rule the same matrix returned `401` in every cell** — that is, every member's
+  agent could reach every other member's server, and only a bearer token refused it. INV-1
+  excludes an application-level check from counting as the boundary, so this was a genuine
+  gap, not a theoretical one. Enforced in
+  [`deploy/nftables-hermes.conf`](../../deploy/nftables-hermes.conf); re-run this check after
+  any firewall edit.
