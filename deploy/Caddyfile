@@ -20,6 +20,17 @@
 	tls {
 		dns dynv6 {env.DYNV6_API_TOKEN}
 	}
+
+	# /health answers UNAUTHENTICATED with the exact Hermes version:
+	#   {"status":"ok","platform":"hermes-agent","version":"0.19.0"}
+	# That is free reconnaissance for anyone on the internet, and this
+	# deployment deliberately runs a pinned (old) version. It grants no
+	# access, but the external boundary is a strict requirement, so the
+	# endpoint is not published. Nothing here monitors it.
+	handle /health {
+		respond 404
+	}
+
 	reverse_proxy 127.0.0.1:8642
 }
 
@@ -27,6 +38,17 @@
 	tls {
 		dns dynv6 {env.DYNV6_API_TOKEN}
 	}
+
+	# /health answers UNAUTHENTICATED with the exact Hermes version:
+	#   {"status":"ok","platform":"hermes-agent","version":"0.19.0"}
+	# That is free reconnaissance for anyone on the internet, and this
+	# deployment deliberately runs a pinned (old) version. It grants no
+	# access, but the external boundary is a strict requirement, so the
+	# endpoint is not published. Nothing here monitors it.
+	handle /health {
+		respond 404
+	}
+
 	reverse_proxy 127.0.0.1:8643
 }
 
@@ -34,6 +56,17 @@
 	tls {
 		dns dynv6 {env.DYNV6_API_TOKEN}
 	}
+
+	# /health answers UNAUTHENTICATED with the exact Hermes version:
+	#   {"status":"ok","platform":"hermes-agent","version":"0.19.0"}
+	# That is free reconnaissance for anyone on the internet, and this
+	# deployment deliberately runs a pinned (old) version. It grants no
+	# access, but the external boundary is a strict requirement, so the
+	# endpoint is not published. Nothing here monitors it.
+	handle /health {
+		respond 404
+	}
+
 	reverse_proxy 127.0.0.1:8644
 }
 
@@ -41,6 +74,17 @@
 	tls {
 		dns dynv6 {env.DYNV6_API_TOKEN}
 	}
+
+	# /health answers UNAUTHENTICATED with the exact Hermes version:
+	#   {"status":"ok","platform":"hermes-agent","version":"0.19.0"}
+	# That is free reconnaissance for anyone on the internet, and this
+	# deployment deliberately runs a pinned (old) version. It grants no
+	# access, but the external boundary is a strict requirement, so the
+	# endpoint is not published. Nothing here monitors it.
+	handle /health {
+		respond 404
+	}
+
 	reverse_proxy 127.0.0.1:8645
 }
 

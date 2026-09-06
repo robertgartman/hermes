@@ -2,11 +2,13 @@
 doc_type: spec
 status: active
 last_updated: 2026-09-06
-verified_on: 2026-07-26
+verified_on: 2026-09-06
 verification: >
-  Firewall layers verified from a fresh connection after each change on 2026-07-26;
-  endpoints returned 200 with production certs. Discord allowlist ordering confirmed by
-  reading the adapter source, not by a live rejection test.
+  2026-09-06 — external-boundary audit EXECUTED against the live host under the Tier-1
+  standard of ADR-015: socket enumeration, firewall inbound policy, SSH posture,
+  unauthenticated probes of every published endpoint including a path sweep, and an
+  authenticated control. One issue found and fixed (/health disclosed the version
+  unauthenticated). VC-3 and VC-5 remain unexecuted and say so.
 must_not_contain:
   - secrets
   - capability_status
@@ -77,17 +79,42 @@ Covers who may reach an agent, over messaging channels and the public API surfac
   is Caddy on 443.
 
   *Check:* `ss -tlnp` on the host; confirm bind addresses.
-  *Observed:* API servers are bound to loopback by configuration and Caddy fronts them; all
-  four endpoints returned `200` with production Let's Encrypt certificates — **2026-07-26**.
-  Direct socket enumeration **NOT YET VERIFIED** as a standing check.
+  *Observed:* **EXECUTED 2026-09-06.** Socket enumeration returned exactly four public-interface
+  listeners: `sshd` on `22`, `caddy` on `80` and `443`, and `systemd-resolved` (LLMNR) on
+  `5355`. All four API servers were on `127.0.0.1` only (`8642-8645`), as were SearXNG
+  (`8888`) and the dashboard (`9121`). The tutor sandbox publishes **no** ports at all.
+
+  **This contradicts FR-2 as written.** Caddy is *not* the only process with a public
+  listener — `sshd` is (intentionally), and `systemd-resolved` binds `5355` on `0.0.0.0`
+  without anyone intending it. Neither is reachable: the firewall's inbound policy is `drop`
+  with allows for `22` and `443` only, so `5355` is unreachable from outside. FR-2 should be
+  restated as "Caddy is the only process serving application traffic publicly", with the
+  firewall — not the absence of listeners — as the control. Recorded rather than silently
+  reinterpreted.
 
 - **VC-2** (Verifies FR-3): Given a member endpoint, when a request is made without a valid
   bearer token, then it is rejected.
 
   *Check:* request `/v1/chat/completions` with no `Authorization` header and with a wrong
   token; expect rejection in both cases.
-  *Observed:* **NOT YET VERIFIED.** All recorded verification used *valid* tokens. The
-  negative case has not been executed.
+  *Observed:* **EXECUTED 2026-09-06 — PASS, with one issue found and fixed.**
+
+  Unauthenticated `GET /v1/models` returned `401` on all four member endpoints, and `401` on
+  the dashboard endpoint. A request carrying a valid token returned `200`. Probing for
+  commonly-exposed unauthenticated paths (`/`, `/healthz`, `/metrics`, `/docs`,
+  `/openapi.json`, `/api/config`) returned `404`.
+
+  **`/health` returned `200` unauthenticated**, disclosing
+  `{"status":"ok","platform":"hermes-agent","version":"0.19.0"}` — the exact version, to
+  anyone on the internet, on all four family endpoints. That is reconnaissance rather than
+  access, so it did not breach the Tier-1 requirement in
+  [ADR-015](../adr/ADR-015-two-tier-security-model.md), but it is the wrong side of a strict
+  line and is now blocked at Caddy (`404`). Re-verified after the change: all four return
+  `404`, and an authenticated call still returns `200`.
+
+  Bearer tokens are 64 characters. SSH posture confirmed alongside: `passwordauthentication
+  no`, `kbdinteractiveauthentication no`, `permitemptypasswords no`, `pubkeyauthentication
+  yes`, `permitrootlogin without-password`, `maxauthtries 3`.
 
 - **VC-3** (Verifies FR-4, INV-3): Given a configured Discord bot, when a sender not in
   `DISCORD_ALLOWED_USERS` messages it, then the message is dropped before any model call and

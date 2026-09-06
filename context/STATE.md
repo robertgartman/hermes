@@ -123,6 +123,7 @@ on a reinstall. See OQ-7.
 | Four gateways, boot-enabled | **Live** | 2026-08-08 | One systemd instance per member |
 | Profile isolation (OS user + mount namespace) | **Live** | 2026-08-08 | See [SPEC-profile-isolation](spec/SPEC-profile-isolation.md) |
 | Scaleway EU inference | **Live** | 2026-08-08 | 57 ms measured upstream latency |
+| External boundary (Tier 1, [ADR-015](adr/ADR-015-two-tier-security-model.md)) | **Live — audited** | 2026-09-06 | Inbound default-drop `22`/`443`; SSH key-only, `maxauthtries 3`; every published endpoint `401` unauthenticated; version disclosure on `/health` found and closed. See SPEC-agent-access-control VC-1/VC-2 |
 | Firewall, both layers default-drop | **Live** | 2026-07-26 | Host nftables + Scaleway security group; `22`/`443` only |
 | Discord — Mattis | **Live** | 2026-07-22 | DM → gateway → allowlist → inference → reply |
 | Discord — other members | **Not configured** | — | |
