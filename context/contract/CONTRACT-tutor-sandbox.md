@@ -4,8 +4,9 @@ status: active
 last_updated: 2026-09-06
 verified_on: 2026-09-06
 verification: >
-  Every name, port, path and image digest below was read back from the running host on
-  2026-09-06, and the traps were each hit during the build rather than anticipated.
+  Every name, address, port and path below was read back from the running host on 2026-09-06,
+  and the access-control behaviour was executed: a member drove the kernel from the host, a
+  non-member host user was refused, and the kernel could reach no host port.
 must_not_contain:
   - secrets
   - decision_rationale
@@ -14,9 +15,9 @@ must_not_contain:
 applies_to: hermes-vps fr-par-1
 audience: [ai, operator]
 retrieval_priority: high
-version: "1.0"
+version: "2.0"
 related_documents:
-  - ADR-013-tutor-sandbox-on-the-family-vps
+  - ADR-017-single-hermes-host-orchestration
   - ADR-011-tutor-sandbox-isolation
   - SPEC-tutor-isolation
 created: 2026-09-06
@@ -26,101 +27,80 @@ created: 2026-09-06
 
 ## Purpose
 
-The exact names, ports, images, paths and credential locations of the tutor sandbox. Managed
-with `podman` as root; there is no deploy script for this yet.
+Exact names, addresses, ports and paths for the tutor. Managed with `podman` as root; there is
+no deploy script for this yet.
+
+**There is no Hermes inside the sandbox.** The members' existing host gateways orchestrate the
+kernel over Jupyter's API — see
+[ADR-017](../adr/ADR-017-single-hermes-host-orchestration.md).
 
 ## Podman Objects
 
-| Object | Name | Notes |
-|---|---|---|
-| Pod | `tutor` | Members share one network namespace |
-| Kernel container | `tutor-jupyter` | JupyterLab + the ADR-012 stack |
-| Orchestrator container | `tutor-hermes` | Hermes gateway, external client of the kernel |
-| Network | `tutor-net-egress` | Routable bridge, **DNS disabled** |
-| Workspace volume | `tutor-workspace` | Mounted at `/home/jovyan/work` |
-| Orchestrator volume | `tutor-hermes-data` | Mounted at `/opt/data` (`HERMES_HOME`) |
-
-The earlier `tutor-net` (`--internal`) network is superseded — see Known Traps.
-
-## Images — pinned by digest
-
-| Role | Image |
+| Object | Name |
 |---|---|
-| Kernel | `quay.io/jupyter/scipy-notebook@sha256:41e9176dc64072976c43c037f853ae9a95ca34aeb0170c58a1b304d62fbde486` |
-| Orchestrator | `docker.io/nousresearch/hermes-agent@sha256:a6ce64e2038867885c2c90f6602425e6e70293d5e6d952a0e603a99265e01c40` (tag `v2026.7.20`) |
+| Pod | `tutor` — **static address `10.89.1.10`** |
+| Kernel container | `tutor-jupyter` (the only container in the pod) |
+| Network | `tutor-net-egress` — routable bridge, **DNS disabled**, subnet `10.89.1.0/24` |
+| Workspace volume | `tutor-workspace` → `/home/jovyan/work` |
 
-The orchestrator tag **deliberately matches the family pin**. Moving one moves the other.
+The address is static **by design**: members' configuration points at it, and a pod recreate
+would otherwise hand out a new address and silently break every caller.
 
-## Ports — all pod-internal, none published
+## Image — pinned by digest
 
-| Port | Service |
+`quay.io/jupyter/scipy-notebook@sha256:41e9176dc64072976c43c037f853ae9a95ca34aeb0170c58a1b304d62fbde486`
+
+Carries the [ADR-012](../adr/ADR-012-deterministic-tools-for-exactness.md) base set: numpy,
+scipy, pandas, matplotlib, sympy, scikit-learn, networkx, ipywidgets, jupyterlab.
+
+## Addresses and Access
+
+| | |
 |---|---|
-| `8888` | JupyterLab, bound to pod loopback |
-| `8650` | Orchestrator API server |
-| `9119` | Hermes dashboard (upstream default) |
+| Kernel API | `http://10.89.1.10:8888` — bound `0.0.0.0` **inside the pod only** |
+| Published to host | **Nothing.** No port publishing |
+| Who may reach it | root and uids `1001-1004` (the four members), enforced by `nftables` `meta skuid` |
+| Kernel → host | Denied at `input` for `10.89.0.0/16`: **no** host port is reachable |
 
-**Nothing is published to the host.** Host `8888` belongs to SearXNG and is unrelated.
+## Orchestration
 
-## Orchestrator Configuration
-
-| Key | Value |
+| | |
 |---|---|
-| `model.provider` | `openai-api` |
-| `model.default` | `qwen3.5-397b-a17b` |
-| `model.base_url` | `https://api.scaleway.ai/v1` — **must be set explicitly**, see traps |
-| `model.max_tokens` | `16384` |
-| container command | `gateway run` — **required**, see traps |
+| Driver | `/opt/hermes-tutor/jupyter_exec.py`, root-owned `0644`, vendored from `deploy/tutor/` |
+| Interpreter | `/usr/local/lib/hermes-agent/venv/bin/python` — needs `websockets`, already a Hermes dependency |
+| Per-member config | `JUPYTER_TOKEN` and `JUPYTER_TUTOR_URL` in each member's own `.env` (mode 600, owned by that member) |
 
 ## Credential Locations
-
-Locations only, never values.
 
 | Credential | Location | Mode |
 |---|---|---|
 | Jupyter server token | `/etc/hermes-tutor/jupyter-token.env` (host), root:root | 600 |
-| Orchestrator env (reused member inference key, Jupyter token, API-server key) | `/etc/hermes-tutor/orchestrator.env` (host), root:root | 600 |
+| Same token, per member | `/home/<member>/.hermes/.env`, owned by that member | 600 |
 
-Both live **outside every `/home`**, following the dynv6 token pattern.
+**No model credential exists anywhere in the sandbox**, and nothing inside it runs Hermes.
 
 ## Known Traps
 
-- **`hermes config set model.provider openai-api` writes `base_url: https://openrouter.ai/api/v1`.**
-  It is not left empty and it does not follow `OPENAI_BASE_URL`. If `model.base_url` is not
-  then set explicitly, the orchestrator points at OpenRouter with a Scaleway key. Symptom:
-  auth failures against a provider you never configured.
-  *Hit during the 2026-09-06 build; corrected by setting `model.base_url` explicitly.*
+- **Podman's published-port path did not work here.** With `-p 127.0.0.1:8890:8888`, `conmon`
+  listened but passed no traffic — **root itself** got no response while the pod address
+  answered `200` directly. Symptom is a connect timeout that looks exactly like a firewall
+  drop, which sends you to the wrong place. Use the pod address; do not reintroduce publishing
+  without testing it end to end.
 
-- **The image's default entrypoint runs the interactive UI and exits immediately without a
-  TTY.** With `--restart`, the container loops forever while `podman ps` briefly shows "Up".
-  Symptom in logs: `Warning: Input is not a terminal (fd=0).` then `Goodbye!`. **Pass
-  `gateway run` as the command** — upstream's compose does exactly this.
-  *Hit during the build.*
+- **Guarding only one path to the kernel guards nothing.** The published port and the pod's
+  bridge address are different destinations. A `meta skuid` rule on one is silently bypassed
+  via the other. The current design removes the ambiguity by having only one path.
 
-- **`podman exec <ctr> sh -c hermes` fails with `hermes: not found`.** The venv is put on
-  `PATH` by the entrypoint wrapper, which `exec` bypasses. Use the absolute path
-  `/opt/hermes/.venv/bin/hermes`, or set `PATH=/opt/hermes/bin:/opt/hermes/.venv/bin:...`
-  and `HOME=/opt/data`.
+- **`--internal` networks cannot reach the inference endpoint** (no default route) and are
+  **still reachable from the host** — `--internal` blocks the container reaching out, not the
+  host reaching in. Neither is what it sounds like.
 
-- **A container on an `--internal` podman network is still reachable from the host**, and
-  therefore from every family gateway, because the host holds an interface on that bridge.
-  `--internal` only stops the container reaching out. **Bind the service to the pod loopback
-  instead** — that is what makes it unreachable.
-  *Observed as a live FR-3 violation on 2026-09-06 before the rebuild.*
+- **Podman's DNS lives on the host bridge address**, so denying the pod access to the host
+  breaks name resolution. Symptom: raw IPs connect while every hostname fails with `gaierror`.
+  The network is created `--disable-dns` with explicit external resolvers.
 
-- **An `--internal` network has no default route**, so no firewall rule can grant egress.
-  Symptom: DNS fails and every outbound connection is `Network is unreachable`.
+- **`inet filter input`'s `policy drop` is load-bearing for the sandbox.** It is what keeps the
+  kernel off host ports. Re-run SPEC-tutor-isolation VC-3 after any firewall change.
 
-- **Podman's DNS server listens on the host bridge address**, so denying the pod access to the
-  host also breaks name resolution. Symptom: raw-IP connections succeed while every hostname
-  fails with `gaierror`. **Create the network with `--disable-dns` and set explicit external
-  resolvers**; pod members reach each other on loopback and need no name service.
-
-- **`inet filter input` `policy drop` is load-bearing for the sandbox, not just for the family
-  platform.** It is what keeps the routable pod off host ports `8642-8645` and `8888`. A
-  firewall edit made for an unrelated reason can remove it and silently reopen that path.
-  Re-run the VC-3 check in [SPEC-tutor-isolation](../spec/SPEC-tutor-isolation.md) after any
-  firewall change.
-
-- **Creating a kernel session over the REST API requires the XSRF exemption or a token
-  header.** With the `Authorization: token …` header it works; a bare `POST /api/sessions`
-  returns an XSRF complaint rather than an auth error, which reads like the wrong problem.
+- **All members currently share one notebook path**, so kernel state is shared between them.
+  Give each member a distinct `--path` if that is not wanted.

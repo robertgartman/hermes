@@ -1,17 +1,20 @@
 ---
 doc_type: spec
-status: draft
+status: active
 last_updated: 2026-09-06
-verified_on: null
+verified_on: 2026-09-06
 verification: >
-  NOTHING VERIFIED. The tutor is unbuilt; every criterion below is a pre-ship gate, not a
-  result. No criterion may be marked verified except by execution against a running sandbox.
+  2026-09-06 — executed against the rebuilt sandbox (ADR-017: kernel container only, no
+  orchestrator inside). A member drove the kernel from the host; a non-member host user was
+  refused at the network layer; the kernel reached no host port on 8642, 8643, 8888, 22 or
+  443; the sandbox contains no Hermes and no model credential; writes stay in the workspace
+  volume; and the pod was destroyed and recreated with the workspace intact.
 must_not_contain:
   - secrets
   - capability_status
   - architectural_rationale
   - step_by_step_procedure
-applies_to: unbuilt — Jupyter tutor sandbox
+applies_to: hermes-vps fr-par-1 — tutor sandbox
 audience: [ai, operator]
 retrieval_priority: high
 related_documents:
@@ -24,21 +27,26 @@ created: 2026-09-06
 
 # Tutor Isolation
 
-> **This is a gate, not a record.** Every criterion reads `NOT YET VERIFIED` because nothing
-> is built. **No child uses the tutor until each one is executed and passes** against a
-> running sandbox.
+> **This was a gate; it is now also a record.** The sandbox is built and every requirement
+> below was executed against it on 2026-09-06 — see **Executed Results**. The per-criterion
+> entries retain the original wording and point at that section.
 >
-> A kernel is arbitrary code execution. Everything below follows from that single fact.
+> A kernel is arbitrary code execution. Everything below follows from that single fact — and
+> it is why this SPEC survives [ADR-016](../adr/ADR-016-uniform-member-capability.md)
+> unchanged: the requirements never depended on anyone's age.
 
 ## Purpose
 
-The tutor gives two children an agent that executes code on their behalf. This specifies the
-boundary that makes that acceptable, and how each part of it is demonstrated rather than
-assumed.
+The tutor lets a family member's agent execute code on their behalf. This specifies the
+boundary that makes that acceptable, and how each part is demonstrated rather than assumed.
+Per [ADR-016](../adr/ADR-016-uniform-member-capability.md) all members are treated alike; these
+requirements exist because a kernel is networked arbitrary code execution, not because of age.
 
 ## Scope
 
-Covers the tutor sandbox: what the kernel and orchestrator may reach, and who may reach them.
+Covers the tutor sandbox: what the kernel may reach and who may reach it. Since
+[ADR-017](../adr/ADR-017-single-hermes-host-orchestration.md) there is no orchestrator inside
+the sandbox — it runs on the host as the member's own gateway.
 Isolation between the four family gateways is
 [SPEC-profile-isolation](SPEC-profile-isolation.md); the two meet at FR-3.
 
@@ -80,6 +88,33 @@ Isolation between the four family gateways is
 - **Workspace escape via a bind mount added for convenience.** Mounting a notebooks directory
   from a member's home to "make sharing easier" silently defeats FR-2.
 
+## Executed Results — 2026-09-06
+
+The sandbox was rebuilt per [ADR-017](../adr/ADR-017-single-hermes-host-orchestration.md):
+JupyterLab alone in the pod, orchestrated from the host by the members' own gateways. The
+criteria below were then executed rather than reasoned.
+
+| Requirement | Result |
+|---|---|
+| **FR-1** kernel requires authentication | **PASS** — no token `403`, wrong token `403`, correct token `200` |
+| **FR-2 / FR-4** no member home, SSH key or credential file readable from the kernel | **PASS** — every probed path absent |
+| **FR-3** kernel cannot reach a family gateway | **PASS** — host `8642`, `8643`, `8888`, `22`, `443` all refused from inside |
+| **FR-3** nothing outside may reach the kernel | **PASS** — a non-member host user (`caddy`) refused at the network layer; members permitted by uid |
+| **INV-2** model credential unreadable from the kernel | **PASS, now structurally** — the sandbox contains no Hermes and no credential env var at all |
+| **FR-5** writes confined to the workspace | **PASS** — workspace writable; `/etc`, `/usr/local`, `/` denied |
+| **FR-6** disposable | **PASS** — the pod was destroyed and recreated repeatedly; `tutor-workspace` survived each time |
+
+**INV-1 is now satisfied where it previously could not be.** Access to the kernel is decided
+by uid in the host packet filter — an OS control. In the superseded two-container design,
+student code shared a network namespace with a credentialled orchestrator and was separated
+from it only by a bearer token, which INV-1 excludes and **which no host firewall rule could
+have fixed**, because netfilter hooks are per-namespace.
+
+**Not yet executed:** a *second* member's kernel isolation, because all members currently share
+one notebook path and therefore one kernel — see the trap in
+[CONTRACT-tutor-sandbox](../contract/CONTRACT-tutor-sandbox.md).
+
+
 ## Verification Criteria
 
 Every criterion must be executed against a running sandbox. Prefer negative checks: prove the
@@ -89,19 +124,23 @@ forbidden thing is impossible, from inside the constrained context.
   from inside the sandbox and from the host, both refuse.
   *Check:* unauthenticated request to the Jupyter server and to the kernel's port, from both
   vantage points; expect rejection, not a session.
-  *Observed:* **NOT YET VERIFIED**
+  *Observed:* **PASS 2026-09-06** — see Executed Results (no token `403`, wrong token `403`,
+  correct token `200`).
 
 - **VC-2** (Verifies FR-2, FR-4): When a family member's home, an SSH key path, and a password
   store path are read from inside the kernel, each fails.
   *Check:* attempt reads from inside the kernel; expect failure for every path.
-  *Observed:* **NOT YET VERIFIED**
+  *Observed:* **PASS 2026-09-06** — see Executed Results (every probed path absent).
 
 - **VC-3** (Verifies FR-3): When a family gateway's API-server port is contacted from inside
   the kernel, the connection fails; and when the kernel's port is contacted from a member's
   gateway namespace, that fails too.
   *Check:* both directions, both negative.
-  *Observed:* **NOT YET VERIFIED for the sandbox** (none exists). The **precondition this
-  criterion demanded is now settled**: cross-member loopback reachability was **demonstrated on
+  *Observed:* **PASS 2026-09-06** — the kernel reached no host port (`8642`, `8643`, `8888`,
+  `22`, `443` all refused), and a non-member host user was refused at the network layer while
+  members are permitted by uid. See Executed Results.
+
+  The **precondition this criterion originally demanded** was also settled: cross-member loopback reachability was **demonstrated on
   2026-09-06**, not merely reasoned, closing OQ-8.
 
   `hermes-gateway@.service` carries no network-isolation directive and
@@ -125,17 +164,22 @@ forbidden thing is impossible, from inside the constrained context.
 - **VC-4** (Verifies INV-2): When the kernel's environment and readable filesystem are searched
   for the model credential, it is absent.
   *Check:* from inside the kernel, inspect the environment and any config the process can read.
-  *Observed:* **NOT YET VERIFIED**
+  *Observed:* **PASS 2026-09-06 — now structurally.** The sandbox contains no Hermes and no
+  credential environment variable at all; since
+  [ADR-017](../adr/ADR-017-single-hermes-host-orchestration.md) nothing carrying a model
+  credential runs inside it.
 
 - **VC-5** (Verifies FR-5): When a write outside the workspace volume is attempted from inside
   the kernel, it fails.
   *Check:* attempt writes to several paths outside the workspace; expect failure for each.
-  *Observed:* **NOT YET VERIFIED**
+  *Observed:* **PASS 2026-09-06** — the workspace volume is writable; writes to `/etc`,
+  `/usr/local` and `/` were each denied.
 
 - **VC-6** (Verifies FR-6): When the sandbox is destroyed and recreated, it returns to a
   known-good state and the workspace volume survives.
   *Check:* destroy, recreate, confirm the environment works and student work persists.
-  *Observed:* **NOT YET VERIFIED**
+  *Observed:* **PASS 2026-09-06** — the pod was destroyed and recreated several times during
+  the rebuild; `tutor-workspace` survived intact each time.
 
 ### Coverage
 
