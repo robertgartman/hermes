@@ -72,6 +72,12 @@ CONTRACT, and a status row — not four files.
 - **ADR** — record the dead ends that looked correct, with how they failed and how the
   failure presented. Never modify an accepted ADR; amend it, or supersede it with a new one.
   Numbers are sequential with no gaps — check `context/adr/` **and** `context/archive/`.
+  **Assume a concurrent session may be claiming the same number.** Re-check the directory
+  immediately before writing the file, and run `./scripts/validate-context.sh` right after —
+  it detects duplicates, gaps, and a heading that disagrees with its filename. On a
+  collision, the ADR already referenced by another document keeps the number; the
+  unreferenced one renumbers, changing **both** filename and `# ADR-NNN:` heading. Full rule
+  in CONTEXT.md.
 - **RUNBOOK** — `## Idempotency` is mandatory. Never restate a deploy script's header.
 - **EPHEMERAL** — `authoritative: false`, always. Every finding must graduate somewhere.
 - **STATE** — every claim carries a date. Status only; never requirements or rationale.

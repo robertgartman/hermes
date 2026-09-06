@@ -49,6 +49,51 @@ while IFS= read -r f; do
 
 done < <(find context -name '*.md' | sort)
 
+# --- ADR numbering ---------------------------------------------------------
+# CONTEXT.md requires ADR numbers to be sequential, zero-padded and gap-free
+# across BOTH context/adr/ and context/archive/. Concurrent sessions each pick
+# "the next number" from the same starting point and collide, which is silent
+# until someone reads the directory listing — so check it here instead.
+mapfile -t adr_files < <(find context/adr context/archive -name 'ADR-[0-9][0-9][0-9]-*.md' 2>/dev/null | sort)
+
+if (( ${#adr_files[@]} > 0 )); then
+  nums=()
+  for f in "${adr_files[@]}"; do
+    n=$(basename "$f" | sed -E 's/^ADR-([0-9]{3}).*/\1/')
+    nums+=("$n")
+    # The heading must agree with the filename — they drift apart precisely when
+    # a file is renamed to resolve a collision.
+    grep -qE "^# ADR-${n}[:[:space:]]" "$f" \
+      || note "ADR HEADING    $f: filename says ADR-${n}, heading does not match"
+  done
+
+  while IFS= read -r d; do
+    [[ -n "$d" ]] || continue
+    owners=$(find context/adr context/archive -name "ADR-${d}-*.md" -exec basename {} \; | tr '\n' ' ')
+    note "ADR DUPLICATE  ADR-${d} claimed by: ${owners}"
+    note "               resolve: the ADR already referenced by another document keeps"
+    note "               the number; the unreferenced one renumbers (see CONTEXT.md)"
+  done < <(printf '%s\n' "${nums[@]}" | sort | uniq -d)
+
+  # Gap detection: the sorted unique set must be exactly 001..N.
+  mapfile -t uniq_nums < <(printf '%s\n' "${nums[@]}" | sort -u)
+  expected=1
+  for n in "${uniq_nums[@]}"; do
+    want=$(printf '%03d' "$expected")
+    [[ "$n" == "$want" ]] || note "ADR GAP        expected ADR-${want}, found ADR-${n}"
+    expected=$((expected + 1))
+  done
+fi
+
+# supersedes / superseded_by must name a document that exists.
+while IFS= read -r f; do
+  while IFS= read -r ref; do
+    [[ -n "$ref" && "$ref" != "null" ]] || continue
+    find context -name "${ref}.md" | grep -q . \
+      || note "DANGLING REF   $f -> ${ref} (supersedes/superseded_by)"
+  done < <(grep -hE '^(supersedes|superseded_by):' "$f" | sed -E 's/^[a-z_]+:[[:space:]]*//')
+done < <(find context -name '*.md')
+
 if (( findings > 0 )); then
   echo "validate-context: $findings finding(s)" >&2
   exit 1

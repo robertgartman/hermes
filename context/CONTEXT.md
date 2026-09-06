@@ -275,6 +275,24 @@ Before assigning a number, check the highest in `context/adr/` **and** `context/
 plus any unmerged branch. Never modify an accepted ADR — amend, or supersede it with a new
 one.
 
+**Collisions happen and are not a mistake to avoid by care alone.** Two sessions working at
+once each read the same "highest number" and both pick the next one; nothing errors, and the
+duplicate is invisible until someone reads the directory listing. This has already occurred
+once here. `./scripts/validate-context.sh` therefore checks numbering mechanically —
+duplicates, gaps, and a heading that disagrees with its filename.
+
+**Tie-break rule.** When two ADRs claim the same number:
+
+1. **The one already referenced by another document keeps it.** Renumbering a referenced ADR
+   means editing every document that points at it, and each of those edits can miss one.
+2. If neither is referenced, the one committed first keeps it.
+3. If neither is committed, the lower-numbered *topic* by creation time keeps it — then just
+   pick, and move on.
+
+The renumbered ADR must have **both** its filename and its `# ADR-NNN:` heading changed. They
+drift apart exactly during a rename, which is why the validator checks them against each
+other.
+
 ---
 
 ## 4. CONTRACT — Interface & Configuration Surface
