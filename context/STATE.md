@@ -328,50 +328,49 @@ changes nothing. The *failure it prevents* was traced through source at the newe
 the protection as sound but the failure mode as inferred.
 
 
-### OQ-11 — Disk is the binding constraint, and it is structural rather than garbage
+### OQ-11 — Disk: measured properly, and it is not what it first looked like
 
-The resize solved memory (~2.7 GB available) but the tutor's images consumed the disk. On
-2026-09-06 an image pull **failed with "no space left on device"**, briefly leaving 194 MB
-free on a host running four agents.
+On 2026-09-06 an image pull **failed with "no space left on device"**, briefly leaving 194 MB
+free on a host running four agents. Cleanup and a proper measurement followed.
 
-**Investigated 2026-09-06. Two hypotheses were tested and both were wrong.**
+**Three wrong conclusions were reached before the right one. All are recorded because each is
+easy to repeat:**
 
-First: `/var/lib/containers` held 14 GB against ~6.8 GB of images by podman's own accounting,
-which looked like orphaned layers from the failed pull. It was not — `podman system check`
-reports the store consistent. The gap is simply that podman's reported image "Size" is not the
-on-disk **extracted** size.
+1. *"7 GB of orphaned layers."* No. `du -sh /var/lib/containers` **without `-x`** descends into
+   the mounted overlay `merged` views and double-counts every running container's unified
+   filesystem. Measured with `du -hx`, container storage is **6.9 GB** — matching podman's own
+   6.845 GB almost exactly. **Always use `du -x` on a host with mounted overlays.**
+2. *"A 268 MB orphaned layer."* No — it was a **running container's mounted `merged` layer**.
+   The delete failed with `Device or resource busy` and nothing was lost. Container layers are
+   recorded in `overlay-containers`, not `overlay-layers`, so checking `layers.json` alone
+   misclassifies live mounts as garbage.
+3. *"Hermes is consuming the disk."* No. The install tree is 2.0 GB.
 
-Second: one overlay directory (268 MB) appeared unreferenced and was treated as an orphan.
-**It was a running container's mounted `merged` layer.** The deletion failed with `Device or
-resource busy` and nothing was lost, but the detection was wrong: **container layers are
-recorded in `overlay-containers`, not `overlay-layers`**, so comparing against `layers.json`
-alone misclassifies live mounts as garbage. Do not repeat that check in that form.
-
-Cleanup therefore recovered ~0.4 GB in total — apt cache (325 MB), journal vacuum
-(129 MB → 48 MB) and one unused image. **There is no garbage left to collect**; every byte of
-the 14 GB is a live, referenced image or container layer.
+**What actually occupies the 19 GB volume** (measured with `du -hx`, 2026-09-06):
 
 | | |
 |---|---|
-| Volume | 19 GB |
-| Extracted images | ~13.7 GB (`scipy-notebook` ~3.9 GB and `hermes-agent` ~2.7 GB are the largest) |
-| Hermes install | 2.2 GB |
+| Container images | **6.9 GB** — `scipy-notebook` ~3.9 GB is the single largest item |
+| `/usr/local/lib/hermes-agent` | 2.0 GB (incl. a 344 MB git pack and a 190 MB Electron binary) |
+| `/swapfile` | 2.0 GB |
+| Base OS (`/usr/lib`, `/usr/share`, …) | ~2.5 GB |
+| **Free** | **3.2 GB** |
 
-**So the remaining options are structural, and all involve a trade:**
+**Cleanup recovered ~1.0 GB in total**: apt cache (325 MB), journal vacuum (129 MB → 48 MB),
+an unused image, and rebuildable caches — `/root/.npm/_cacache` (251 MB), `/root/.cache/uv`
+(240 MB) and an already-extracted Electron zip (110 MB). All regenerate on demand.
 
-1. **Attach a Scaleway block volume** and move `/var/lib/containers` onto it. Costs a little
-   monthly; changes nothing else.
-2. **Use a smaller kernel image.** `scipy-notebook` is the single biggest item, and a minimal
-   base would not carry the [ADR-012](adr/ADR-012-deterministic-tools-for-exactness.md) stack
-   without rebuilding it.
-3. **Move the tutor to its own host**, which [ADR-011](adr/ADR-011-tutor-sandbox-isolation.md)
-   left open as a compatible placement.
+**Still available if needed, each with a caveat:** the 344 MB git pack (the installer needs
+history for `--commit`, so do not shallow it lightly) and the 190 MB Electron binary shipped
+for a desktop UI this headless host never runs (removal may be undone by an update).
 
-**Anything that pulls another image needs headroom first** — including testing an upgrade
-candidate, which is how this was discovered.
+**Structural options remain** if the tutor grows: a Scaleway block volume, a smaller kernel
+image, or moving the tutor to its own host as
+[ADR-011](adr/ADR-011-tutor-sandbox-isolation.md) left open. **Anything pulling another
+multi-GB image should confirm headroom first** — 3.2 GB is workable but not generous.
 
-**This contradicts [AGENTS.md](../AGENTS.md)'s standing guidance that "RAM is the binding
-constraint, not disk or CPU."** That was true on DEV1-S before the tutor existed.
+**This still contradicts [AGENTS.md](../AGENTS.md)'s "RAM is the binding constraint, not disk
+or CPU"** — true on DEV1-S before the tutor existed.
 
 ---
 
