@@ -19,6 +19,7 @@ retrieval_priority: high
 version: "1.0"
 related_documents:
   - ADR-006-public-api-exposure
+  - ADR-009-retire-model-tier-reasoning-patch
   - SPEC-agent-access-control
 created: 2026-09-06
 ---
@@ -56,6 +57,14 @@ curl https://1.agent-hermes.dynv6.net/v1/chat/completions \
 ```
 
 ## Model Tier Aliases
+
+> **Superseded in principle, still live in practice.**
+> [ADR-009](../adr/ADR-009-retire-model-tier-reasoning-patch.md) retires the three-tier
+> surface in favour of a single alias with no configured reasoning effort. **That decision is
+> not yet implemented** — everything in this section remains accurate on the host as of
+> 2026-09-06. When the cutover happens, this section collapses to one alias, the
+> `reasoning_effort` row disappears from Configuration Keys, `pinned_to` drops the patch
+> reference, and `verified_on` reverts to `null` until reconfirmed.
 
 Exposed via `GET /v1/models` by the **API server only**. All three use the same model and
 vary only reasoning effort.

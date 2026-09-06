@@ -19,6 +19,7 @@ related_documents:
   - ADR-003-scaleway-eu-inference
   - ADR-004-private-searxng-backend
   - ADR-005-command-stt-provider
+  - ADR-009-retire-model-tier-reasoning-patch
 created: 2026-09-06
 ---
 
@@ -92,6 +93,22 @@ move with the pin.
 - **`model.provider: custom` looks right and is wrong.** For an OpenAI-compatible endpoint
   that is not OpenAI, the working value is `openai-api`.
   *Confirmed in deployment.*
+
+- **Hermes never sends a reasoning field to Scaleway from its ordinary config path, so any
+  global reasoning setting is inert here.** `run_agent._supports_reasoning_extra_body()`
+  gates the reasoning `extra_body`, and its final clause is
+  `if "openrouter" not in base_url: return False`. `api.scaleway.ai` is not OpenRouter, so it
+  returns `False` and the field is dropped. Setting a global reasoning effort therefore
+  produces **no error, no log line and no change in behaviour** — it simply does nothing.
+  The only mechanism that placed `reasoning_effort` on a Scaleway request was the
+  now-retired patch's `request_overrides`; see
+  [ADR-009](../adr/ADR-009-retire-model-tier-reasoning-patch.md).
+  **Do not "restore" reasoning control by setting a global key and assuming it took.** If
+  differentiated behaviour is needed, vary the **model** — `model_routes.<alias>.model` is an
+  upstream field and needs no patch.
+  *Confirmed from installed source 2026-09-06 (`run_agent.py`), and by measurement against
+  the live endpoint: omitting the field produced 499 completion tokens, `none` produced 5,
+  `high` produced 597 — i.e. Scaleway reasons substantially by default.*
 
 - **`hermes config set` warns "not a recognized config key" for every `stt.providers.<name>.*`
   key.** Symptom: `Did you mean: stt.provider`. Cause: the validator does not know about

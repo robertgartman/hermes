@@ -28,6 +28,8 @@ related_documents:
   - CONTRACT-messaging-channels
   - SPEC-profile-isolation
   - SPEC-agent-access-control
+  - SPEC-tutor-isolation
+  - ADR-009-retire-model-tier-reasoning-patch
   - EPHEMERAL-hermes-pin-upgrade-2026-09-06
 created: 2026-09-06
 ---
@@ -121,7 +123,7 @@ swap. Not a blocker by itself, but any reinstall on this box is tight. See OQ-7.
 | Web search (SearXNG) | **Live** | 2026-08-08 | All four profiles, three real results each |
 | Page extraction (Tavily) | **Live** | 2026-08-08 | See trap in [CONTRACT-hermes-config-surface](contract/CONTRACT-hermes-config-surface.md) |
 | API server + Caddy + real certs | **Live** | 2026-08-08 | Four FQDNs, production Let's Encrypt |
-| Model tier aliases (`quick`/`default`/`smart`) | **Live** | 2026-08-08 | Reasoning-effort mapping confirmed per profile |
+| Model tier aliases (`quick`/`default`/`smart`) | **Live — retirement decided** | 2026-08-08 | Reasoning-effort mapping confirmed per profile. [ADR-009](adr/ADR-009-retire-model-tier-reasoning-patch.md) collapses this to a single alias with no configured effort; **decided 2026-09-06, not yet implemented** |
 | `python`/`python3` venv wrappers | **Live** | 2026-07-27 | Fixes google-workspace skill reliability |
 | Browser automation | **No backend** | — | |
 | Image generation | **No backend** | — | |
@@ -237,10 +239,19 @@ member PATH (root-owned at `/root/.hermes/bin/uv`), and its documented launch us
 **The security question is the important one.** That skill's documented launch disables
 authentication entirely. The isolation boundary here is the OS user and mount namespace —
 **not** the network namespace — so loopback is shared across all four members. An
-unauthenticated kernel on loopback would be reachable by every member's gateway. Whether this
-warrants a requirement in [SPEC-profile-isolation](spec/SPEC-profile-isolation.md) is
-undecided; the cross-member reachability was reasoned from unit configuration and **not
-demonstrated**. Nothing has been built — see [PRD-jupyter-tutor](prd/PRD-jupyter-tutor.md).
+unauthenticated kernel on loopback would be reachable by every member's gateway.
+
+This is now captured as **FR-1** of
+[SPEC-tutor-isolation](spec/SPEC-tutor-isolation.md) — *no Jupyter kernel or server listens
+without authentication, on any interface including loopback*. Its verification criterion
+stands at **NOT YET VERIFIED**: cross-member loopback reachability was reasoned from unit
+configuration and has **not been demonstrated** on the host. Nothing has been built — see
+[PRD-jupyter-tutor](prd/PRD-jupyter-tutor.md) and
+[ADR-011](adr/ADR-011-tutor-sandbox-isolation.md).
+
+**What remains open here is the present state, not the future design:** the skill is seeded
+and inert today, and the two host-level obstacles (`uv` absent from the member PATH, port
+`8888` already held) are unaddressed.
 
 ### OQ-9 — Inference works because of an upstream bug, and that bug is now fixed upstream
 
