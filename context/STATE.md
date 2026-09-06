@@ -125,7 +125,7 @@ on a reinstall. See OQ-7.
 | Scaleway EU inference | **Live** | 2026-08-08 | 57 ms measured upstream latency |
 | External boundary (Tier 1, [ADR-015](adr/ADR-015-two-tier-security-model.md)) | **Live — audited** | 2026-09-06 | Inbound default-drop `22`/`443`; SSH key-only, `maxauthtries 3`; every published endpoint `401` unauthenticated; version disclosure on `/health` found and closed. See SPEC-agent-access-control VC-1/VC-2 |
 | Firewall, both layers default-drop | **Live** | 2026-07-26 | Host nftables + Scaleway security group; `22`/`443` only |
-| Discord — Mattis | **Live** | 2026-07-22 | DM → gateway → allowlist → inference → reply |
+| Discord — Mattis | **Live** | 2026-09-06 | Connection confirmed (ESTAB to Discord's gateway; Love, with no Discord, holds none). Allowlist is a valid 18-digit snowflake and enforcement is fail-closed before any model call — SPEC-agent-access-control VC-3. A real non-allowlisted sender has **not** been tested |
 | Discord — other members | **Not configured** | — | |
 | Slack / Telegram / WhatsApp | **Not configured** | — | Deps preinstalled; no tokens set |
 | Voice transcription (STT) | **Live — messaging path only** | 2026-08-08 | Scaleway command provider; reverified after the Qwen tier update. Per [ADR-005](adr/ADR-005-command-stt-provider.md) the API server proxies no transcription route, so the web/API surface has no voice input |

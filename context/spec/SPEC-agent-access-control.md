@@ -122,9 +122,35 @@ Covers who may reach an agent, over messaging channels and the public API surfac
 
   *Check:* message a member's bot from an unlisted account; confirm no completion appears in
   `journalctl -u hermes-gateway@<member>`.
-  *Observed:* enforcement ordering **confirmed by reading `plugins/platforms/discord/adapter.py`**
-  — the allowlist is checked before any model call. A **live rejection test has not been
-  run**; this is source-confirmed, not host-confirmed.
+  *Observed:* **EXECUTED 2026-09-06 — enforcement verified from the installed source and the
+  live host; one part remains unexecuted and is named below.**
+
+  **Ordering (INV-3).** In the installed
+  `plugins/platforms/discord/adapter.py`, the guard at line 1290 is
+  `if not self._is_allowed_user(...): self._warn_if_fail_closed_default(); return False, False`
+  — it returns **before** the agent is invoked, so a rejected sender consumes no inference.
+
+  **Fail-closed default.** `_is_allowed_user()` (line 4109) returns `False` when neither a user
+  nor a role allowlist is configured, unless `DISCORD_ALLOW_ALL_USERS` or
+  `GATEWAY_ALLOW_ALL_USERS` is explicitly set. Absence of configuration denies rather than
+  permits.
+
+  **Allowlist shape — the documented trap.** Mattis's `DISCORD_ALLOWED_USERS` is a bare
+  **18-digit numeric snowflake**, not a username, so it will actually match. Robert, Sofia and
+  Love have **no Discord token and zero `DISCORD_*` variables**, so no second exposure exists.
+
+  **The platform is genuinely live**, which matters because a disconnected bot would make any
+  allowlist test vacuously pass: Mattis's gateway holds one ESTABLISHED connection to
+  `162.159.130.234:443` (Cloudflare, fronting Discord's gateway), while Love's gateway — with
+  no Discord configured — holds none. Periodic `WebSocket unhealthy (socket_closed, 1/2)`
+  warnings are transient reconnect churn, not an outage.
+
+  *Not executed:* **no message from a non-allowlisted Discord account has been sent**, because
+  that needs a second Discord identity. Everything above establishes that the code path denies
+  and denies early; it does not observe a real stranger being turned away. The journal shows
+  zero rejections and zero fail-closed warnings to date — consistent with nobody having tried,
+  and therefore **not** evidence the path works. Close this by DMing the bot from an
+  unrelated account and confirming no reply and no inference in the log.
 
 - **VC-4** (Verifies FR-5, FR-6): Given a host outside the deployment, when TCP ports other
   than 22 and 443 are probed, then they are dropped at both layers.
