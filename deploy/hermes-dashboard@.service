@@ -1,0 +1,83 @@
+# Hermes web dashboard, one instance per Linux user: hermes-dashboard@robert.
+#
+# ADMIN SURFACE — NOT a chat interface. The web UI is a single SPA whose routes
+# include /chat but also /env, /config, /files and /models: it manages the
+# profile's environment variables (the Scaleway key among them), filesystem and
+# configuration. Path-filtering at the reverse proxy does NOT separate these —
+# the routes are client-side views over a shared /api/*, so anyone reaching
+# /chat can call the config and env endpoints directly.
+#
+# Consequently this is enabled for the adult operator only. Family members get
+# chat through their own API server (CONTRACT-api-server-endpoints), which
+# exposes conversation and nothing else. See ADR-014.
+#
+# Two flags are load-bearing and both were found the hard way:
+#   --skip-build         the host install ships no built frontend, and npm is
+#                        not reachable as the member user, so without this the
+#                        dashboard exits with "Web UI frontend not built".
+#   HERMES_WEB_DIST      the host lookup does not find hermes_cli/web_dist on
+#                        its own; the upstream container image sets this env var
+#                        explicitly and so must we.
+#
+# The port comes from /etc/hermes-dashboard/%i.env (DASHBOARD_PORT). Ports must
+# stay inside the range the firewall reserves — see nftables-hermes.conf, which
+# restricts them to root and caddy because loopback is shared by every member.
+
+[Unit]
+Description=Hermes Agent Web Dashboard (%i)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=%i
+Group=%i
+WorkingDirectory=/home/%i
+
+EnvironmentFile=/etc/hermes-dashboard/%i.env
+Environment="HOME=/home/%i"
+Environment="USER=%i"
+Environment="LOGNAME=%i"
+Environment="PATH=/usr/local/lib/hermes-agent/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="VIRTUAL_ENV=/usr/local/lib/hermes-agent/venv"
+Environment="HERMES_HOME=/home/%i/.hermes"
+Environment="HERMES_WEB_DIST=/usr/local/lib/hermes-agent/hermes_cli/web_dist"
+
+ExecStartPre=/bin/mkdir -p /home/%i/.hermes
+# Bind 127.0.0.1 only. The public listener is Caddy's alone, exactly as for the
+# API servers — the dashboard must never hold one itself.
+ExecStart=/usr/local/lib/hermes-agent/venv/bin/python -m hermes_cli.main dashboard \
+    --host 127.0.0.1 --port ${DASHBOARD_PORT} --no-open --skip-build
+
+Restart=always
+RestartSec=10
+RestartPreventExitStatus=78
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+MemoryHigh=240M
+MemoryMax=320M
+MemorySwapMax=256M
+
+# --- sandboxing: identical posture to hermes-gateway@.service ---
+ProtectHome=tmpfs
+BindPaths=/home/%i
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectKernelTunables=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hermes-dash-%i
+
+[Install]
+WantedBy=multi-user.target

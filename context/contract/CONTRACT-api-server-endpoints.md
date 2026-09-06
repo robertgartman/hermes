@@ -2,18 +2,20 @@
 doc_type: contract
 status: active
 last_updated: 2026-09-06
-verified_on: 2026-08-08
+verified_on: 2026-09-06
 verification: >
-  All four public model lists contained only quick/default/smart; live calls succeeded for
-  every profile; Robert's recorded API sessions confirmed effective reasoning configs as
-  disabled, medium and high. Endpoint certs verified 2026-07-26.
+  2026-09-06 — after implementing ADR-009: /v1/models returns only hermes-agent and default,
+  a live completion through default returned 200, and the web dashboard endpoint was checked
+  end to end (401 without credentials, 401 on a wrong password, 200 with the correct one,
+  real Let's Encrypt issuer). Cross-member loopback access to the dashboard was confirmed
+  blocked. Endpoint certs for 1-4 verified 2026-07-26.
 must_not_contain:
   - secrets
   - decision_rationale
   - behavioural_explanation
   - step_by_step_procedure
 applies_to: hermes-vps fr-par-1
-pinned_to: hermes-agent + deploy/hermes-api-model-route-reasoning.patch
+pinned_to: hermes-agent (stock; no local patch as of 2026-09-06)
 audience: [ai, operator]
 retrieval_priority: high
 version: "1.0"
@@ -40,6 +42,13 @@ model alias names. Set by
 | Sofia | `https://2.agent-hermes.dynv6.net` | 8643 |
 | Mattis | `https://3.agent-hermes.dynv6.net` | 8644 |
 | Love | `https://4.agent-hermes.dynv6.net` | 8645 |
+| Robert — **web dashboard (admin)** | `https://5.agent-hermes.dynv6.net` | 9121 |
+
+The `5` endpoint is the Hermes web UI and is **not** a chat endpoint for the family — it is an
+admin surface serving `/env`, `/config` and `/files` from the same application as `/chat`. See
+[ADR-014](../adr/ADR-014-web-ui-is-admin-only.md). It is guarded by **two** controls: basic
+auth at Caddy, and an `nftables` rule restricting ports `9121-9124` to `root` and the Caddy
+uid, because loopback is shared by every member gateway.
 
 **Subdomain labels are numeric by design and must stay that way** — see
 [ADR-006](../adr/ADR-006-public-api-exposure.md). Certificate Transparency logs are
@@ -56,47 +65,37 @@ curl https://1.agent-hermes.dynv6.net/v1/chat/completions \
   -d '{"model": "hermes-agent", "messages": [{"role": "user", "content": "Hello!"}]}'
 ```
 
-## Model Tier Aliases
+## Model Surface
 
-> **Superseded in principle, still live in practice.**
-> [ADR-009](../adr/ADR-009-retire-model-tier-reasoning-patch.md) retires the three-tier
-> surface in favour of a single alias with no configured reasoning effort. **That decision is
-> not yet implemented** — everything in this section remains accurate on the host as of
-> 2026-09-06. When the cutover happens, this section collapses to one alias, the
-> `reasoning_effort` row disappears from Configuration Keys, `pinned_to` drops the patch
-> reference, and `verified_on` reverts to `null` until reconfirmed.
+`GET /v1/models` returns exactly two entries:
 
-Exposed via `GET /v1/models` by the **API server only**. All three use the same model and
-vary only reasoning effort.
+| Name | Backing model |
+|---|---|
+| `hermes-agent` | the native root name |
+| `default` | `qwen3.5-397b-a17b` |
 
-| Alias | Model | `reasoning_effort` |
-|---|---|---|
-| `quick` | `qwen3.5-397b-a17b` | `none` |
-| `default` | `qwen3.5-397b-a17b` | `medium` |
-| `smart` | `qwen3.5-397b-a17b` | `high` |
+**`default` is the stable contract** — clients select by name. The `quick` and `smart` tiers
+were retired on 2026-09-06 by
+[ADR-009](../adr/ADR-009-retire-model-tier-reasoning-patch.md); they no longer resolve.
 
-**The alias names are the stable contract** — clients like Chatbox select by name. The
-backing model and effort levels live in `03-configure-profiles.sh` (`ALIAS_MODEL`,
-`EFFORT_QUICK`, `EFFORT_DEFAULT`, `EFFORT_SMART`). Re-running that script also removes the
-superseded `medium` and `ultra` routes from existing profiles.
-
-Scaleway accepts `none`, `low`, `medium` and `high` for this model.
+**No reasoning effort is configured anywhere**, and none can be sent to Scaleway from Hermes'
+ordinary configuration path — see the trap in
+[CONTRACT-hermes-config-surface](CONTRACT-hermes-config-surface.md). Scaleway's own default
+applies. If differentiated tiers are ever wanted again, vary
+`model_routes.<alias>.model` — an upstream field needing no patch.
 
 ## Configuration Keys
 
 | Key | Value |
 |---|---|
-| `platforms.api_server.extra.model_routes.<alias>.model` | `qwen3.5-397b-a17b` |
-| `platforms.api_server.extra.model_routes.<alias>.provider` | upstream field |
-| `platforms.api_server.extra.model_routes.<alias>.reasoning_effort` | supplied by the deployment patch |
-| `model.max_tokens` | `16384` — global, used by all three tiers |
+| `platforms.api_server.extra.model_routes.default.model` | `qwen3.5-397b-a17b` |
+| `platforms.api_server.extra.model_routes.default.provider` | `openai-api` |
+| `model.max_tokens` | `16384` — global |
 | `API_SERVER_CORS_ORIGINS` | `*` — required, not optional |
+| `DASHBOARD_PORT` | `/etc/hermes-dashboard/<member>.env`, read by `hermes-dashboard@.service` |
 
-`reasoning_effort` at route level is **not** upstream. It comes from
-[`deploy/hermes-api-model-route-reasoning.patch`](../../deploy/hermes-api-model-route-reasoning.patch),
-a narrow extension that accepts the field, validates it, updates Hermes' internal reasoning
-config, and forwards it as Scaleway's top-level request field. It does not alter auxiliary
-tasks or MoA.
+There is **no** route-level `reasoning_effort` key any more. It never existed upstream; it
+came from a local patch that has been retired and must not be reapplied.
 
 ## Credential Locations
 
@@ -104,8 +103,32 @@ tasks or MoA.
 |---|---|---|
 | Per-member bearer tokens | `~/.hermes-family-keys/api-server/<member>.key` — **workstation only, never on the host** | 600 |
 | dynv6 API token | `/etc/dynv6/api-token.env` (host), root:root — deliberately outside every `/home/<member>` | 600 |
+| Dashboard basic-auth credential | `/etc/hermes-dashboard/robert-webui.cred` (host), root:root | 600 |
+| Dashboard bcrypt hash for Caddy | `/etc/hermes-dashboard/caddy.env` (host), root:root, read by `caddy.service` | 600 |
 
 ## Known Traps
+
+- **The dashboard rejects proxied requests with `400 {"detail":"Invalid Host header..."}`.**
+  It enforces DNS-rebinding protection and accepts only the address it bound to. This reads
+  exactly like a broken reverse-proxy config but is the backend refusing deliberately. Fix it
+  in Caddy with `header_up Host {upstream_hostport}` — **not** by binding the dashboard to a
+  public interface, which would break ADR-006's rule that Caddy holds the only public
+  listener.
+  *Hit 2026-09-06: auth succeeded and the request still 400'd, which misdirects toward the
+  credential.*
+
+- **`basic_auth` is the Caddy 2.8+ spelling.** Older documentation says `basicauth`; this host
+  runs v2.11.4 and the old name fails validation.
+
+- **Basic auth at Caddy does not protect the loopback path.** A dashboard bound to
+  `127.0.0.1` is reachable by every member gateway — measured `HTTP 200` from a child's user
+  before the firewall rule existed. The `nftables` uid restriction is the control for that
+  door; the password guards only the public one.
+
+- **The host install ships no built web UI.** `hermes dashboard` exits with "Web UI frontend
+  not built and npm is not available" because the installer never builds it and `npm` is not
+  reachable as a member user. Build once as root in `web/`, then run with **both**
+  `--skip-build` and `HERMES_WEB_DIST` — either alone still fails.
 
 - **`API_SERVER_CORS_ORIGINS` is required for browser-like clients, and `curl` will never
   catch its absence** — `curl` is not subject to CORS at all, so the endpoint tests clean

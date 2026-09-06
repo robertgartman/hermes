@@ -43,3 +43,41 @@
 	}
 	reverse_proxy 127.0.0.1:8645
 }
+
+# 5 = Robert's Hermes web dashboard — ADMIN SURFACE, adult operator only.
+#
+# Deliberately NOT a chat endpoint for the family. The Hermes web UI is a
+# single SPA: the same server that serves /chat also serves /env (the
+# profile's environment variables, Scaleway key included), /config and
+# /files. Path-filtering here would not separate them — those routes are
+# client-side views over a shared /api/*, so anyone who could reach /chat
+# could call the config and env endpoints directly. Family chat therefore
+# stays on the per-member API servers above, which expose conversation and
+# nothing else. See ADR-014.
+#
+# Two doors, two controls, and basic_auth only covers one of them:
+#   - public door  -> basic_auth here
+#   - loopback door -> nftables, because 127.0.0.1 is shared by all four
+#     member gateways (measured: a child's agent got HTTP 200 against this
+#     dashboard before the rule existed). See nftables-hermes.conf.
+#
+# ROBERT_DASH_HASH is a bcrypt hash supplied through caddy.service's
+# EnvironmentFile, never stored in this repository.
+5.agent-hermes.dynv6.net {
+	tls {
+		dns dynv6 {env.DYNV6_API_TOKEN}
+	}
+	basic_auth {
+		robert {env.ROBERT_DASH_HASH}
+	}
+	# The dashboard enforces DNS-rebinding protection: it rejects any request
+	# whose Host header is not the address it bound to, with
+	#   400 {"detail":"Invalid Host header..."}
+	# That reads like a proxy misconfiguration but is the backend refusing on
+	# purpose. Rewrite Host to the upstream so it sees 127.0.0.1:9121.
+	# Do NOT "fix" this by binding the dashboard to a public interface —
+	# Caddy must remain the only public listener.
+	reverse_proxy 127.0.0.1:9121 {
+		header_up Host {upstream_hostport}
+	}
+}

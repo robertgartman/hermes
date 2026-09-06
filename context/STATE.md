@@ -132,6 +132,7 @@ on a reinstall. See OQ-7.
 | Page extraction (Tavily) | **Live** | 2026-08-08 | See trap in [CONTRACT-hermes-config-surface](contract/CONTRACT-hermes-config-surface.md) |
 | API server + Caddy + real certs | **Live** | 2026-08-08 | Four FQDNs, production Let's Encrypt |
 | Model alias (single `default`) | **Live** | 2026-09-06 | [ADR-009](adr/ADR-009-retire-model-tier-reasoning-patch.md) implemented. `/v1/models` returns `hermes-agent` and `default` only; `quick`/`smart` retired. Live completion through `default` returned `200`. No reasoning effort configured — Scaleway's default applies |
+| Hermes web UI — Robert only | **Live** | 2026-09-06 | Built on host (`web_dist`); `hermes-dashboard@robert` on 9121; `https://5.agent-hermes.dynv6.net` behind basic auth + an nftables uid rule. Admin surface — see [ADR-014](adr/ADR-014-web-ui-is-admin-only.md) |
 | `python`/`python3` venv wrappers | **Live** | 2026-07-27 | Fixes google-workspace skill reliability |
 | Image understanding (vision input) | **Unknown — never tested** | — | No image has been sent to any member's agent on any channel. Unmeasured, **not** known-absent — see OQ-6 |
 | Browser automation | **No backend** | — | |
