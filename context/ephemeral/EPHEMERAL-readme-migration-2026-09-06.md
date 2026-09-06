@@ -113,7 +113,12 @@ inference keys, four bearer tokens, a Tavily key and a DNS token.
 `HERMES_JUPYTER_TUTOR.md`. Its first line is *"Since the file link isn't usable in your
 client…"*. It is scratch, duplicating content now held properly.
 
-**Recommendation: delete.** Left in place — deleting an author's file is the author's call.
+**Resolved 2026-09-06: deleted** at the operator's instruction, after confirming the only
+10 lines unique to it were the transcript wrapper itself (`cat > … <<'EOF'`, "Then verify it
+with", "That will write it directly into your real repo"). Every line of actual content is
+held in
+[EPHEMERAL-jupyter-tutor-design-2026-09-06](EPHEMERAL-jupyter-tutor-design-2026-09-06.md),
+and the file remains in git history regardless.
 
 ### F-8 — Verification coverage is asymmetric on the security boundary
 
@@ -152,7 +157,7 @@ document body.
 | Finding | Disposition | Destination |
 |---|---|---|
 | F-1 – F-6 | Accepted | `context/CONTEXT.md` |
-| F-7 | Recommendation | Awaiting operator decision |
+| F-7 | Accepted | `idea.md` deleted 2026-09-06; content held in EPHEMERAL-jupyter-tutor-design |
 | F-8 | Accepted | SPEC-agent-access-control; tracked here until closed |
 | F-9 | Accepted | SPEC-profile-isolation; needs deploy-script assertions |
 | F-10 | Accepted | RUNBOOK-rotate-inference-keys, `status: draft` |
