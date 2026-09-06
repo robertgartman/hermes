@@ -4,10 +4,11 @@ status: active
 last_updated: 2026-09-06
 verified_on: 2026-09-06
 verification: >
-  2026-09-06 — read-only host observation refreshed the measured footprint, installed
-  version and pin, service and listener inventory, per-member skill seeding, and the
-  install tree's dirty state. Capability rows below retain their OWN earlier dates: the
-  2026-09-06 pass did NOT re-test inference, STT, web search, Discord or isolation.
+  2026-09-06 — host observation plus three executed changes: ADR-009 implemented (patch
+  reverted, tree verified stock, single alias confirmed by a live completion), instance
+  resized DEV1-S to DEV1-M (services self-recovered, reserved IP retained), and the tutor
+  Jupyter pod built and its isolation checks executed. Capability rows retain their OWN
+  dates: this pass did NOT re-test STT, web search, Discord, or profile isolation.
   2026-08-08 — SearXNG listener scope, per-member web_search_tool and Tavily extraction,
   model-tier reasoning configs read back from recorded API sessions, and config read-back
   for all four profiles.
@@ -51,24 +52,28 @@ created: 2026-09-06
 | | |
 |---|---|
 | Provider / zone | Scaleway, `fr-par-1` |
-| Instance type | **DEV1-S** — 2 vCPU / 2 GB RAM / 20 GB local NVMe |
-| Cost | €6.55/mo + IPv4 |
+| Instance type | **DEV1-M** — 3 vCPU / 4 GB RAM / 20 GB local NVMe — *resized 2026-09-06* |
+| Cost | €14.74/mo + IPv4 (was €6.55 on DEV1-S) |
 | OS | Debian 13 (trixie) |
 | Members | robert, sofia, mattis, love |
 | Hermes version | **v0.19.0 (2026.7.20)**, pin `f13f8451`, install method `git` — *2026-09-06* |
 | Python | 3.11.15 (uv-created venv, no `pip`) — *2026-09-06* |
 
-**The install tree is deliberately dirty.** `/usr/local/lib/hermes-agent` is a git working
-copy carrying uncommitted edits to `gateway/platforms/api_server.py` and
-`tests/gateway/test_api_server.py` (+70/−5). That dirty state *is* the live model-tier patch.
-Confirmed 2026-09-06 to be **byte-identical** to
-[`deploy/hermes-api-model-route-reasoning.patch`](../deploy/hermes-api-model-route-reasoning.patch),
-so nothing exists only on the host. Any `hermes update` would stash it and, given upstream
-drift, fail to re-apply it.
+**The install tree is now stock.** It was a git working copy carrying the model-tier patch as
+uncommitted modifications; [ADR-009](adr/ADR-009-retire-model-tier-reasoning-patch.md) was
+implemented on 2026-09-06 and those files were reverted. `git status --porcelain` reports no
+modified files and `gateway/platforms/api_server.py` contains zero `reasoning_effort`
+occurrences. The patch survives only as
+[`deploy/hermes-api-model-route-reasoning.patch`](../deploy/hermes-api-model-route-reasoning.patch)
+— historical record, **not to be reapplied**. `hermes update` no longer has local
+modifications to stash, conflict over, and reset.
 
-**Upgrade path if needed:** `DEV1-M` (3 vCPU / 4 GB, €14.74/mo) is a stop/resize/start away.
-Note that the literal 2 vCPU / 4 GB options (`PLAY2-NANO`, €20.10) cost *more* than DEV1-M
-for less CPU.
+**Resized 2026-09-06** to host the tutor sandbox
+([ADR-011](adr/ADR-011-tutor-sandbox-isolation.md) lists resize as a compatible placement).
+Stop → `commercial-type=DEV1-M` → start; the public IP survived because it is a **reserved**
+`routed_ipv4` (`dynamic=False`), not a dynamic one. All services returned on their own.
+Available memory went ~877 MB → ~2922 MB. Note the literal 2 vCPU / 4 GB options
+(`PLAY2-NANO`, €20.10) cost *more* than DEV1-M for less CPU.
 
 ---
 
@@ -76,20 +81,21 @@ for less CPU.
 
 All four gateways plus SearXNG running, idle.
 
-| | 2026-09-06 | 2026-08-08 |
-|---|---|---|
-| Per-gateway RSS | **~185 MB each** (~655 MB across four) | 133–191 MB across deployment stages |
-| SearXNG | `MemoryCurrent` **~14 MB** | ~140 MB warmed |
-| Total used | 1171 MB / 1968 MB | 1.1 GB / 1968 MB |
-| Available | **~783 MB** | ~860 MB |
-| Swap used | ~34 MB of 2047 MB | 0 (2 GB swapfile configured) |
-| Disk | **8.4 GB / 19 GB** (9.0 GB free) | ~8 GB / 19 GB |
-| Install tree | **2.2 GB** | 2.2 GB |
-| Uptime | 45 days, load 0.01 | — |
+| | 2026-09-06 **after resize** | 2026-09-06 pre-resize | 2026-08-08 |
+|---|---|---|---|
+| Instance | DEV1-M, 3 vCPU | DEV1-S, 2 vCPU | DEV1-S |
+| Per-gateway RSS | ~185 MB each | ~185 MB each (~655 MB across four) | 133–191 MB |
+| SearXNG | ~132 MB (podman stats) | `MemoryCurrent` ~14 MB | ~140 MB warmed |
+| Tutor Jupyter pod | **~79 MB** (cap 1 GB) | n/a | n/a |
+| Total used | **1173 MB / 3916 MB** | 1171 MB / 1968 MB | 1.1 GB / 1968 MB |
+| Available | **~2742 MB** | ~783 MB | ~860 MB |
+| Swap used | **0** of 2047 MB | ~34 MB of 2047 MB | 0 |
+| Disk | **~13.8 GB / 19 GB** (5.2 GB free) | 8.4 GB / 19 GB (9.0 free) | ~8 GB / 19 GB |
+| Install tree | 2.2 GB | 2.2 GB | 2.2 GB |
 
-The 2026-09-06 SearXNG figure is `systemd`'s `MemoryCurrent` for the unit, which is not the
-same measurement as the 2026-08-08 warmed-RSS figure — treat the drop as a difference in
-method, **not** as evidence the service shrank.
+The disk drop is the **3.87 GB** digest-pinned `scipy-notebook` image. The two SearXNG figures
+measure different things (`podman stats` RSS vs systemd `MemoryCurrent`); neither indicates the
+service changed.
 
 **Loopback listeners** (2026-09-06): `8642`/`8643`/`8644`/`8645` per-member API servers ·
 `8888` SearXNG. Caddy holds the only public listeners (`80`, `443`); `sshd` on `22`.
@@ -102,9 +108,10 @@ not track the install tree.
 see open question OQ-3. And the *install itself* peaks at **1.6 GB**, which is the tightest
 moment on the box; capacity planning should use that figure, not the steady state.
 
-**Upgrade headroom (2026-09-06).** ~783 MB available, plus ~655 MB reclaimable by stopping
-the four gateways, gives **~1.44 GB against a 1.6 GB install peak** — short, and dependent on
-swap. Not a blocker by itself, but any reinstall on this box is tight. See OQ-7.
+**Upgrade headroom — resolved by the resize.** On DEV1-S this was ~1.44 GB against a 1.6 GB
+install peak, i.e. dependent on swap. On DEV1-M it is **~2742 MB available against the same
+1.6 GB peak**, with the tutor pod already running. Memory is no longer the binding constraint
+on a reinstall. See OQ-7.
 
 ---
 
@@ -123,14 +130,16 @@ swap. Not a blocker by itself, but any reinstall on this box is tight. See OQ-7.
 | Web search (SearXNG) | **Live** | 2026-08-08 | All four profiles, three real results each |
 | Page extraction (Tavily) | **Live** | 2026-08-08 | See trap in [CONTRACT-hermes-config-surface](contract/CONTRACT-hermes-config-surface.md) |
 | API server + Caddy + real certs | **Live** | 2026-08-08 | Four FQDNs, production Let's Encrypt |
-| Model tier aliases (`quick`/`default`/`smart`) | **Live — retirement decided** | 2026-08-08 | Reasoning-effort mapping confirmed per profile. [ADR-009](adr/ADR-009-retire-model-tier-reasoning-patch.md) collapses this to a single alias with no configured effort; **decided 2026-09-06, not yet implemented** |
+| Model alias (single `default`) | **Live** | 2026-09-06 | [ADR-009](adr/ADR-009-retire-model-tier-reasoning-patch.md) implemented. `/v1/models` returns `hermes-agent` and `default` only; `quick`/`smart` retired. Live completion through `default` returned `200`. No reasoning effort configured — Scaleway's default applies |
 | `python`/`python3` venv wrappers | **Live** | 2026-07-27 | Fixes google-workspace skill reliability |
 | Browser automation | **No backend** | — | |
 | Image generation | **No backend** | — | |
 | TTS | **No backend** | — | |
 | Per-member spend tracking | **Unresolved** | — | See OQ-1 |
 | Child-safety controls | **Not configured** | — | See OQ-4 — **the most significant open gap** |
-| Jupyter live-kernel skill | **Seeded but non-functional** | 2026-09-06 | Bundled skill present in all four homes incl. both children; prerequisites unmet — see OQ-8 |
+| Jupyter live-kernel skill (on family gateways) | **Seeded, inert, and must stay so** | 2026-09-06 | Present in all four homes incl. both children; prerequisites unmet. [ADR-011](adr/ADR-011-tutor-sandbox-isolation.md) **rejects** enabling it here — see OQ-8 |
+| Tutor sandbox — kernel half | **Running, incomplete** | 2026-09-06 | Podman pod `tutor`: digest-pinned JupyterLab + the ADR-012 stack, token-authenticated, bound to pod loopback, unreachable from host and from every family gateway. **No orchestrator, so not usable** — see OQ-10 |
+| Tutor sandbox — orchestrator | **Not built** | — | Blocked on pod egress (firewall change) and a model credential — see OQ-10 |
 
 ---
 
@@ -222,8 +231,10 @@ four blockers, none yet resolved. Full analysis and evidence:
 4. **Command-STT loses its credentials** to a new subprocess environment scrub — voice
    transcription would return empty transcripts with no error.
 
-Also relevant: install headroom is ~1.44 GB against a 1.6 GB peak (above), and the live patch
-exists only as uncommitted working-tree state (Host, above).
+Two of those have since moved. The live patch is **gone** — ADR-009 was implemented on
+2026-09-06 and the install tree is now stock, removing blocker 2's dirty-tree complication.
+And the install-headroom concern is **resolved by the resize**: ~2922 MB available against a
+1.6 GB peak, rather than the ~1.44 GB it was on DEV1-S.
 
 **The tier mechanism must be decided before the pin moves.** No breaking-change review of the
 full 9750-commit range was performed, so **further blockers may exist** — the four above were
@@ -275,6 +286,32 @@ future upgrade regardless of when one is attempted. A candidate mitigation exist
 (`model.api_mode: chat_completions`, set on all four profiles before any gateway starts on new
 code) but is **untested**, and must be proven from the outgoing request body rather than a
 `200`.
+
+### OQ-10 — The tutor sandbox has a kernel but no orchestrator
+
+The kernel half is built and its isolation checks pass
+([EPHEMERAL-tutor-sandbox-build-2026-09-06](ephemeral/EPHEMERAL-tutor-sandbox-build-2026-09-06.md)).
+**There is no tutor**, because [ADR-010](adr/ADR-010-hermes-outside-the-jupyter-kernel.md)
+puts Hermes outside the kernel as an API client and that service does not exist. Two things
+gate it:
+
+1. **Pod egress needs a firewall change.** `inet filter forward` is `policy drop`, so bridge
+   containers have no egress; the orchestrator cannot reach Scaleway. Additive `forward`
+   accepts plus NAT masquerade were prepared but **not applied** — the change was refused by
+   operator tooling and needs explicit authorisation.
+2. **The orchestrator needs a model credential**, which is a provisioning decision — a new
+   Scaleway IAM application per the existing per-member pattern, or reuse of an existing key.
+   Undecided.
+
+**A consequence to decide deliberately, not inherit:** pod members share a network namespace,
+so giving the orchestrator egress also gives the **student kernel** internet access. The SPEC
+does not forbid it, but it governs what a child's code may reach.
+
+**Also load-bearing and easy to break by accident:** `inet filter input` is `policy drop` with
+only `22`/`443` open, and that is what keeps the pod off host ports `8642-8645`/`8888` once
+egress exists. FR-3 depends on it. A future firewall edit for an unrelated reason could remove
+it silently.
+
 
 ---
 
