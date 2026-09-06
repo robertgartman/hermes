@@ -103,7 +103,7 @@ inference keys, four bearer tokens, a Tavily key and a DNS token.
 | Requirements status R1–R8 | PRD-family-agent-platform (the requirements), STATE.md (their status) |
 | Open questions | STATE.md |
 | Operational notes | AGENTS.md §4, CONTRACT-host-layout |
-| `HERMES_JUPYTER_TUTOR.md` | PRD-jupyter-tutor (intent) + EPHEMERAL-jupyter-tutor-design (proposed architecture) |
+| `HERMES_JUPYTER_TUTOR.md` | PRD-jupyter-tutor (intent) + ADR-010/011/012 + SPEC-tutor-isolation; original archived |
 
 ## Findings Requiring Attention
 
@@ -117,7 +117,7 @@ client…"*. It is scratch, duplicating content now held properly.
 10 lines unique to it were the transcript wrapper itself (`cat > … <<'EOF'`, "Then verify it
 with", "That will write it directly into your real repo"). Every line of actual content is
 held in
-[EPHEMERAL-jupyter-tutor-design-2026-09-06](EPHEMERAL-jupyter-tutor-design-2026-09-06.md),
+[EPHEMERAL-jupyter-tutor-design-2026-09-06](../archive/EPHEMERAL-jupyter-tutor-design-2026-09-06.md),
 and the file remains in git history regardless.
 
 ### F-8 — Verification coverage is asymmetric on the security boundary

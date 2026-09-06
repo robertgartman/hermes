@@ -1,6 +1,6 @@
 ---
 doc_type: ephemeral
-status: draft
+status: superseded
 last_updated: 2026-09-06
 verified_on: null
 verification: >
@@ -10,18 +10,30 @@ must_not_contain:
   - secrets
 authoritative: false
 retrieval_priority: low
+superseded_by: PRD-jupyter-tutor
 related_documents:
   - PRD-jupyter-tutor
+  - ADR-010-hermes-outside-the-jupyter-kernel
+  - ADR-011-tutor-sandbox-isolation
+  - ADR-012-deterministic-tools-for-exactness
+  - SPEC-tutor-isolation
 created: 2026-09-06
 ---
 
-> **Design exploration, not a decision.** This document was written before anything was
-> built and records one proposed architecture for a Jupyter-based tutor. It governs nothing.
+> **Superseded 2026-09-06 — archived.** The design here has graduated into decided documents;
+> this file is kept only for traceability of the original reasoning.
 >
-> Product intent extracted from it lives in
-> [PRD-jupyter-tutor](../prd/PRD-jupyter-tutor.md). The architecture below has **not** been
-> decided — if and when it is, the load-bearing choices become ADRs and this document is
-> archived.
+> | What it argued | Now lives in |
+> |---|---|
+> | Hermes orchestrates from outside the kernel | [ADR-010](../adr/ADR-010-hermes-outside-the-jupyter-kernel.md) |
+> | Container sandboxing, no host access, disposable | [ADR-011](../adr/ADR-011-tutor-sandbox-isolation.md) |
+> | Model/tool split, STEM toolchain, model strategy | [ADR-012](../adr/ADR-012-deterministic-tools-for-exactness.md) |
+> | Goal, audience, behaviour rules, controls, phasing | [PRD-jupyter-tutor](../prd/PRD-jupyter-tutor.md) |
+> | The safety boundary, as executable checks | [SPEC-tutor-isolation](../spec/SPEC-tutor-isolation.md) |
+>
+> Not graduated, and deliberately so: the sidebar/`%%hermes` UI sketches, notebook
+> organisation, scientific-visualisation notes and proof-of-concept notebook ideas. They are
+> design detail, not decisions that foreclose options — revisit them when Phase 3 is reached.
 >
 > Original filename: `HERMES_JUPYTER_TUTOR.md`.
 

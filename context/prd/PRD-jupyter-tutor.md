@@ -3,7 +3,7 @@ doc_type: prd
 status: draft
 last_updated: 2026-09-06
 verified_on: null
-verification: Product intent for an unbuilt capability. Nothing here has been implemented.
+verification: Product intent for a desired, unbuilt capability. Nothing implemented.
 must_not_contain:
   - secrets
   - implementation_details
@@ -12,15 +12,25 @@ must_not_contain:
 audience: [ai, operator, product]
 related_documents:
   - PRD-family-agent-platform
+  - ADR-010-hermes-outside-the-jupyter-kernel
+  - ADR-011-tutor-sandbox-isolation
+  - ADR-012-deterministic-tools-for-exactness
+  - SPEC-tutor-isolation
 created: 2026-09-06
 ---
 
 # Jupyter School Tutor
 
-> **Nothing here is built.** This records product intent for a possible second capability on
-> the existing family platform. The proposed architecture — sidebar, cell magic, container
-> layout, model split — is a separate exploration and is **not decided**: see
-> [EPHEMERAL-jupyter-tutor-design-2026-09-06](../ephemeral/EPHEMERAL-jupyter-tutor-design-2026-09-06.md).
+> **Desired, not built.** This records product intent for a second capability on the existing
+> family platform. The architecture is now **decided** and lives in three ADRs:
+> [ADR-010](../adr/ADR-010-hermes-outside-the-jupyter-kernel.md) (Hermes orchestrates from
+> outside the kernel), [ADR-011](../adr/ADR-011-tutor-sandbox-isolation.md) (dedicated
+> sandbox, not a family gateway), and
+> [ADR-012](../adr/ADR-012-deterministic-tools-for-exactness.md) (deterministic tools do the
+> exact work).
+>
+> **The gate before any child uses it** is
+> [SPEC-tutor-isolation](../spec/SPEC-tutor-isolation.md) — nine checks, none yet run.
 
 ## Purpose
 
@@ -133,7 +143,12 @@ amounts of inference cost.
 ## Risks & Open Questions
 
 - **Does it fit on the host at all?** Unmeasured, and the most likely reason this stalls.
-- **Does keeping Hermes outside the kernel hold up in practice?** The design exploration
-  argues it should; nothing has tested it.
+- **Does keeping Hermes outside the kernel hold up in practice?**
+  [ADR-010](../adr/ADR-010-hermes-outside-the-jupyter-kernel.md) decides it should; nothing
+  has tested it.
+- **A bundled `jupyter-live-kernel` skill is already seeded to both children** and is inert
+  only by accident — `uv` off the member PATH, and a port collision. Neither is a security
+  control. See OQ-8 in [STATE.md](../STATE.md) and
+  [ADR-011](../adr/ADR-011-tutor-sandbox-isolation.md).
 - **Does hint-first behaviour survive a motivated teenager?** A tutor whose solution mode is
   one request away may be indistinguishable from an answer engine in practice.
