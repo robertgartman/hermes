@@ -204,39 +204,22 @@ Every figure above is idle with no channels connected. `MemoryMax=320M` per memb
 comfortable now but untested against live Slack/Discord/WhatsApp clients and concurrent
 conversations.
 
-### OQ-4 — Child-safety controls: one real boundary added, the rest still open
+### OQ-4 — CLOSED 2026-09-06 by decision: members are treated alike
 
-**The most significant open gap, now partially addressed.** Mattis and Love have agents that
-execute shell commands.
+Carried for weeks as "the most significant open gap": Mattis and Love were described as
+children whose agents needed reduced capability, and successive analyses proposed approval
+modes, toolset allowlists, skill pruning and removal of their endpoints.
 
-**The finding that reframes this question.** Every constraint Hermes offers — approval modes,
-tool allowlists, disabled toolsets, skill removal — is read from `~/.hermes/config.yaml` or
-`~/.hermes/.env`. **Both files are owned by the member and writable by that member's own
-shell.** An agent that wants a restriction gone can remove it. Per
-[ADR-001](adr/ADR-001-one-os-user-per-member.md) and
-[SPEC-profile-isolation](spec/SPEC-profile-isolation.md) INV-1, **none of it may be recorded
-against this question as the control.** It is defence in depth and must be described that way.
+**The operator has decided they are treated no differently from the adults.** They are 16 and
+17, and this is a parenting decision, not a technical one. See
+[ADR-016](adr/ADR-016-uniform-member-capability.md).
 
-**Closed 2026-09-06 — cross-member network isolation.** Each member's API server was
-reachable by every other member on shared loopback, refused only by a bearer token. That is
-exactly the application-level dependency INV-1 forbids. Per-uid `nftables` rules now refuse it
-in the kernel. Verified as a full 4×4 matrix: own port `401`, all twelve cross-member
-combinations `000`, Caddy still proxying all five public endpoints. Captured as **FR-6 / VC-6**
-in SPEC-profile-isolation, including that the same matrix returned `401` everywhere before.
+**Nothing age-based is to be built.** Any future per-member restriction needs its own ADR
+explaining why it is not uniform.
 
-**Still open, and the remaining items need decisions rather than research:**
-
-1. **Both children have a public HTTPS endpoint** (`3.` and `4.`) whose toolset bundle
-   `hermes-api-server` includes `terminal`, `process` and file read/write. Restricting Discord
-   alone would not touch it — every platform's toolset key is independent. Removing the two
-   children's endpoints entirely is the only *boundary-grade* option; anything else is
-   configuration they can edit.
-2. **Skill pruning is unverified.** 78 bundled skills are seeded per child, including
-   categories plainly unsuitable for a 10–16 year old. Whether deleting them is durable, or
-   whether a restart re-seeds them, was **not** established on the host — and if they are
-   re-seeded, pruning is theatre.
-3. **The `/yolo` slash command is currently available to both children**, because slash-command
-   gating stays inert until an admin allowlist has at least one entry.
+This does **not** relax [SPEC-tutor-isolation](spec/SPEC-tutor-isolation.md): an
+unauthenticated kernel on a shared interface is unacceptable because a kernel is arbitrary
+code execution reachable over a network, which is equally true for an adult.
 
 ### OQ-5 — Key rotation
 
@@ -345,29 +328,50 @@ changes nothing. The *failure it prevents* was traced through source at the newe
 the protection as sound but the failure mode as inferred.
 
 
-### OQ-11 — Disk, not memory, is now the binding constraint
+### OQ-11 — Disk is the binding constraint, and it is structural rather than garbage
 
 The resize solved memory (~2.7 GB available) but the tutor's images consumed the disk. On
-2026-09-06 a routine image pull **failed with "no space left on device"**, briefly leaving
-194 MB free on a host running four family agents. Cleanup recovered it to ~2.4 GB and no
-service was harmed, but the margin is thin.
+2026-09-06 an image pull **failed with "no space left on device"**, briefly leaving 194 MB
+free on a host running four agents.
+
+**Investigated 2026-09-06. Two hypotheses were tested and both were wrong.**
+
+First: `/var/lib/containers` held 14 GB against ~6.8 GB of images by podman's own accounting,
+which looked like orphaned layers from the failed pull. It was not — `podman system check`
+reports the store consistent. The gap is simply that podman's reported image "Size" is not the
+on-disk **extracted** size.
+
+Second: one overlay directory (268 MB) appeared unreferenced and was treated as an orphan.
+**It was a running container's mounted `merged` layer.** The deletion failed with `Device or
+resource busy` and nothing was lost, but the detection was wrong: **container layers are
+recorded in `overlay-containers`, not `overlay-layers`**, so comparing against `layers.json`
+alone misclassifies live mounts as garbage. Do not repeat that check in that form.
+
+Cleanup therefore recovered ~0.4 GB in total — apt cache (325 MB), journal vacuum
+(129 MB → 48 MB) and one unused image. **There is no garbage left to collect**; every byte of
+the 14 GB is a live, referenced image or container layer.
 
 | | |
 |---|---|
-| Volume | 19 GB total |
-| Container storage | **~14 GB** |
+| Volume | 19 GB |
+| Extracted images | ~13.7 GB (`scipy-notebook` ~3.9 GB and `hermes-agent` ~2.7 GB are the largest) |
 | Hermes install | 2.2 GB |
-| Free | ~2.4 GB |
 
-Largest items: `scipy-notebook` 3.87 GB and `hermes-agent:v2026.7.20` 2.68 GB unpacked.
+**So the remaining options are structural, and all involve a trade:**
 
-**This contradicts the standing guidance in [AGENTS.md](../AGENTS.md) that "RAM is the binding
-constraint, not disk or CPU."** That was true on DEV1-S before the tutor existed; it is no
-longer true. Anything that pulls another image — including testing an upgrade candidate —
-needs headroom first.
+1. **Attach a Scaleway block volume** and move `/var/lib/containers` onto it. Costs a little
+   monthly; changes nothing else.
+2. **Use a smaller kernel image.** `scipy-notebook` is the single biggest item, and a minimal
+   base would not carry the [ADR-012](adr/ADR-012-deterministic-tools-for-exactness.md) stack
+   without rebuilding it.
+3. **Move the tutor to its own host**, which [ADR-011](adr/ADR-011-tutor-sandbox-isolation.md)
+   left open as a compatible placement.
 
-Options, undecided: prune unused images, attach a Scaleway block volume, or move the tutor to
-its own host as [ADR-011](adr/ADR-011-tutor-sandbox-isolation.md) contemplated.
+**Anything that pulls another image needs headroom first** — including testing an upgrade
+candidate, which is how this was discovered.
+
+**This contradicts [AGENTS.md](../AGENTS.md)'s standing guidance that "RAM is the binding
+constraint, not disk or CPU."** That was true on DEV1-S before the tutor existed.
 
 ---
 
@@ -375,6 +379,8 @@ its own host as [ADR-011](adr/ADR-011-tutor-sandbox-isolation.md) contemplated.
 
 | Was | Resolved | How |
 |---|---|---|
+| Inference depended on an upstream bug (OQ-9) | 2026-09-06 | `model.api_mode: chat_completions` pinned on all four profiles and the tutor |
+| Child-safety controls unconfigured (OQ-4) | 2026-09-06 | Closed by decision — members treated alike, see [ADR-016](adr/ADR-016-uniform-member-capability.md) |
 | Host firewall not configured | 2026-07-26 | Both layers default-drop with explicit `22`/`443` allows, applied in safe order and verified from a fresh connection after each change |
 | Discord voice messages did not work | 2026-07-26 | Scaleway command STT provider — see [ADR-005](adr/ADR-005-command-stt-provider.md) |
 | No web-query backends configured | 2026-08-08 | Shared private SearXNG for search, Tavily for extraction, all four profiles |
