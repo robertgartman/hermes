@@ -25,8 +25,8 @@ HOST="${1:-}"
 [[ -n "$HOST" ]] || { echo "usage: $0 <host-ip>" >&2; exit 64; }
 
 SSH_KEY="${SSH_KEY:-$HOME/.ssh/id_rsa}"
-INSTALLER_SHA="${INSTALLER_SHA:-c5ba7e89627577fab914514736ecfb3359b66956ca00199bfef616ca35953cb9}"
-PIN_COMMIT="${PIN_COMMIT:-f13f845116941ac5616e8df3294f3379a3efeb20}"
+INSTALLER_SHA="${INSTALLER_SHA:-5854b15670b51a8daae8f59ddfa917062de9f74be261eb73b4b8d719710f8968}"
+PIN_COMMIT="${PIN_COMMIT:-29112bef099274229cadff79cdff7bf7b99c4b77}"
 
 # SC2087 is deliberate: this heredoc is UNQUOTED so ${INSTALLER_SHA} and
 # ${PIN_COMMIT} expand HERE, on the workstation, baking the checksum gate and

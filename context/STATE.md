@@ -57,7 +57,7 @@ created: 2026-09-06
 | Cost | €14.74/mo + IPv4 (was €6.55 on DEV1-S) |
 | OS | Debian 13 (trixie) |
 | Members | robert, sofia, mattis, love |
-| Hermes version | **v0.19.0 (2026.7.20)**, pin `f13f8451`, install method `git` — *2026-09-06* |
+| Hermes version | **v0.21.0 (2026.8.31)**, HEAD `fa869157`, install method `git` — *upgraded 2026-09-06* |
 | Python | 3.11.15 (uv-created venv, no `pip`) — *2026-09-06* |
 
 **The install tree is now stock.** It was a git working copy carrying the model-tier patch as
@@ -244,29 +244,34 @@ Two questions are open, and the second is the larger one:
 
 Neither question needs a host change to answer — one is a message, the other is a `grep`.
 
-### OQ-7 — The pin is 9750 commits behind and the upgrade is blocked
+### OQ-7 — RESOLVED 2026-09-06: upgraded to v0.21.0 and running
 
-Assessed 2026-09-06 against latest stable **`v2026.8.31`** (commit `29112bef`). **NO-GO** —
-four blockers, none yet resolved. Full analysis and evidence:
-[EPHEMERAL-hermes-pin-upgrade-2026-09-06](ephemeral/EPHEMERAL-hermes-pin-upgrade-2026-09-06.md).
+Moved from `f13f8451` (v0.19.0, 2026.7.20) to **v0.21.0 (2026.8.31)**. All four gateways
+restarted with `NRestarts=0` and zero errors; live inference, all five public endpoints,
+SearXNG, Discord and the tutor sandbox verified working afterwards.
 
-1. **Wire protocol flips** — would break inference for all four members. See OQ-9.
-2. **Route-level `reasoning_effort` has no upstream mechanism**, and the config-only
-   replacement via `custom_providers` + `extra_body` was investigated and **does not work**.
-   The `quick`/`default`/`smart` tiers depend on the local patch, which no longer applies.
-3. **Tavily extraction is deleted upstream** — `web.extract_backend: tavily` would have no
-   implementation. SearXNG *search* is unaffected.
-4. **Command-STT loses its credentials** to a new subprocess environment scrub — voice
-   transcription would return empty transcripts with no error.
+**Two of the four blockers had been cleared beforehand** — the reasoning patch was retired
+(ADR-009) so the installer had no local modifications to stash and clobber, and
+`model.api_mode: chat_completions` was pinned (OQ-9), which is what kept inference on the
+right wire protocol.
 
-Two of those have since moved. The live patch is **gone** — ADR-009 was implemented on
-2026-09-06 and the install tree is now stock, removing blocker 2's dirty-tree complication.
-And the install-headroom concern is **resolved by the resize**: ~2922 MB available against a
-1.6 GB peak, rather than the ~1.44 GB it was on DEV1-S.
+**The other two blockers turned out not to exist in the build that was installed.** Tavily is
+supported (`tools/web_tools.py` gates it on `TAVILY_API_KEY` and lists it among the bundled
+providers) and the STT credential scrub is absent from `tools/transcription_tools.py`. Both
+were verified present-and-broken at commit `29112bef` and are fine at `fa869157` — see the
+trap below.
 
-**The tier mechanism must be decided before the pin moves.** No breaking-change review of the
-full 9750-commit range was performed, so **further blockers may exist** — the four above were
-found by targeted inspection, not by exhaustive review.
+**`--commit` did not pin what was asked for.** The installer was given
+`--commit 29112bef…` (the `v2026.8.31` tag commit) and checked out **`fa869157`** instead.
+The release identifies as `v0.21.0 (2026.8.31)` either way, but **the tree is not the tag's
+tree**, and the difference was material: the two remaining blockers exist at the tag commit
+and not at the installed one. Anyone reasoning about upstream behaviour must read the code at
+the **installed HEAD**, not at the tag. This weakens the reproducibility guarantee
+`PIN_COMMIT` is meant to provide and should be investigated before the next upgrade.
+
+**Post-upgrade actions required, both already done:** the venv is rebuilt, so messaging
+dependencies had to be reinstalled from the pinned tree's `LAZY_DEPS` table (which still
+exists with the same keys), and the `python`/`python3` wrappers survived intact.
 
 ### OQ-8 — The Jupyter skill is seeded to both children but cannot run
 
