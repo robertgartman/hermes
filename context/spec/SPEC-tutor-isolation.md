@@ -100,8 +100,27 @@ forbidden thing is impossible, from inside the constrained context.
   the kernel, the connection fails; and when the kernel's port is contacted from a member's
   gateway namespace, that fails too.
   *Check:* both directions, both negative.
-  *Observed:* **NOT YET VERIFIED** — cross-member loopback reachability is currently **reasoned
-  from unit configuration, not demonstrated** (OQ-8). Demonstrate or refute it before building.
+  *Observed:* **NOT YET VERIFIED for the sandbox** (none exists). The **precondition this
+  criterion demanded is now settled**: cross-member loopback reachability was **demonstrated on
+  2026-09-06**, not merely reasoned, closing OQ-8.
+
+  `hermes-gateway@.service` carries no network-isolation directive and
+  `PrivateNetwork=no`. From Love's gateway namespace — and as the `love` UNIX user — a request
+  to Robert's API server on `127.0.0.1:8642` **connects and is answered**, returning `401`. A
+  control request to the deliberately shared SearXNG on `127.0.0.1:8888` returns `200`.
+
+  The TCP path across members is therefore **open**; only the bearer token refuses it, which is
+  an application-level control and explicitly not the boundary under INV-1. An unauthenticated
+  kernel on this interface would return `200` to any member's agent, with nothing in the way.
+  This is the evidence behind FR-1 and behind the rejection of the on-host skill in
+  [ADR-011](../adr/ADR-011-tutor-sandbox-isolation.md).
+
+  *Re-runnable check:*
+  ```bash
+  nsenter -t "$(systemctl show hermes-gateway@love -p MainPID --value)" -n -m -- \
+    curl -sS -m 8 -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8642/v1/models
+  # 000/refused = isolated (desired end state); any HTTP response = reachable
+  ```
 
 - **VC-4** (Verifies INV-2): When the kernel's environment and readable filesystem are searched
   for the model credential, it is absent.

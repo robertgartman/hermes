@@ -241,13 +241,19 @@ authentication entirely. The isolation boundary here is the OS user and mount na
 **not** the network namespace — so loopback is shared across all four members. An
 unauthenticated kernel on loopback would be reachable by every member's gateway.
 
-This is now captured as **FR-1** of
+This is captured as **FR-1** of
 [SPEC-tutor-isolation](spec/SPEC-tutor-isolation.md) — *no Jupyter kernel or server listens
-without authentication, on any interface including loopback*. Its verification criterion
-stands at **NOT YET VERIFIED**: cross-member loopback reachability was reasoned from unit
-configuration and has **not been demonstrated** on the host. Nothing has been built — see
+without authentication, on any interface including loopback*. Nothing has been built — see
 [PRD-jupyter-tutor](prd/PRD-jupyter-tutor.md) and
 [ADR-011](adr/ADR-011-tutor-sandbox-isolation.md).
+
+**Cross-member loopback reachability is no longer a supposition — it was demonstrated
+2026-09-06.** `hermes-gateway@.service` has no network-isolation directive
+(`PrivateNetwork=no`), and from Love's gateway namespace a request to Robert's API server on
+`127.0.0.1:8642` connects and is answered (`401`); the shared SearXNG on `8888` returns `200`
+as a control. The TCP path between members is open, and only a bearer token refuses it. An
+unauthenticated kernel on that interface would answer `200` to any member's agent. See
+SPEC-tutor-isolation VC-3 for the re-runnable check.
 
 **What remains open here is the present state, not the future design:** the skill is seeded
 and inert today, and the two host-level obstacles (`uv` absent from the member PATH, port
