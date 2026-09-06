@@ -28,6 +28,13 @@ SSH_KEY="${SSH_KEY:-$HOME/.ssh/id_rsa}"
 INSTALLER_SHA="${INSTALLER_SHA:-c5ba7e89627577fab914514736ecfb3359b66956ca00199bfef616ca35953cb9}"
 PIN_COMMIT="${PIN_COMMIT:-f13f845116941ac5616e8df3294f3379a3efeb20}"
 
+# SC2087 is deliberate: this heredoc is UNQUOTED so ${INSTALLER_SHA} and
+# ${PIN_COMMIT} expand HERE, on the workstation, baking the checksum gate and
+# the commit pin into the script before it is sent. Everything intended for the
+# remote shell is escaped explicitly (\$VENV_PY, \$(sha256sum ...)). Quoting the
+# delimiter would ship the literal variable names and silently defeat both the
+# checksum verification and the version pin.
+# shellcheck disable=SC2087
 ssh -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes -i "$SSH_KEY" "root@$HOST" \
   "cat > /root/install-hermes.sh" <<REMOTE
 #!/bin/bash

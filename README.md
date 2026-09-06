@@ -1,46 +1,40 @@
 # Hermes family setup on Scaleway
 
 Four family members — Robert, Sofia, Mattis, Love — each running their own always-on
-[Hermes Agent](https://hermes-agent.nousresearch.com) on one cheap EU VPS, with
-EU/GDPR-resident inference via Scaleway Generative APIs.
+[Hermes Agent](https://hermes-agent.nousresearch.com) on one cheap EU VPS, with EU-resident
+inference via Scaleway Generative APIs.
 
-Everything below has been executed and verified on a live host. Where something is
-unverified or known-broken it says so explicitly.
+**€6.55/mo. One 2 GB host. Four isolated agents. No web UI required.**
 
-## Deployment runbook
+---
 
-Run in order. Steps 1–3 rebuild the entire deployment from nothing.
+## What this repository is
 
-| # | Script | Where | What it does |
-|---|---|---|---|
-| 0 | `scw init` | workstation | Authenticate the Scaleway CLI. Interactive — needs a real TTY, so run it in a normal terminal. |
-| 1 | [`deploy/01-provision-scaleway.sh`](deploy/01-provision-scaleway.sh) | workstation | Creates 5 projects, registers your SSH key, creates one IAM application + scoped policy + API key per member, and boots the VPS with [`cloud-init-hermes-base.yaml`](deploy/cloud-init-hermes-base.yaml). |
-| 2 | [`deploy/02-install-hermes.sh <ip>`](deploy/02-install-hermes.sh) | workstation → host | Installs Hermes once, system-wide, checksum-verified and pinned to a commit. ~6 min. |
-| 3 | [`deploy/03-configure-profiles.sh <ip>`](deploy/03-configure-profiles.sh) | workstation → host | Installs the [gateway unit](deploy/hermes-gateway@.service), writes each member's `.env` via [`configure-profile.sh`](deploy/configure-profile.sh), points Hermes at Scaleway, starts all four gateways. |
-| 4 | [`deploy/configure-profile.sh <user> -`](deploy/configure-profile.sh) | host, per member | Add messaging channels by piping `KEY=VALUE` lines in — non-interactive, secrets never enter argv or shell history. See [Configured: Discord for Mattis](#configured-discord-for-mattis). `hermes whatsapp` / `hermes gateway setup` remain available for interactive setup over SSH — **no web UI required**. |
-| 5 | [`deploy/04-enable-api-server.sh <ip>`](deploy/04-enable-api-server.sh) | workstation → host | Optional. Enables hermes-agent's API server per member, builds and installs a Caddy reverse proxy (real Let's Encrypt certs via dynv6 DNS-01), points DNS at the host. See [Mobile / API access](#mobile--api-access). Idempotent — safe to re-run after a VPS recreate. |
-| 6 | [`deploy/05-enable-web-search.sh <ip>`](deploy/05-enable-web-search.sh) | workstation → host | Installs one private SearXNG backend shared by all profiles and optionally configures Tavily extraction when `~/.hermes-family-keys/tavily.key` exists. See [Web queries: SearXNG + Tavily](#web-queries-searxng--tavily). |
+A **deployment repository**, not an application. It holds the scripts, systemd units and
+documentation that build the deployment — the running system itself lives on a VPS.
 
-Step 1 writes the four inference keys to `~/.hermes-family-keys/` (mode 600). Scaleway
-shows a secret key **once**; those files are the only copy. They never enter git.
+That distinction shapes everything: this repo can tell you what a script does, but only the
+live host can tell you what is true. So every claim about the deployment is dated, and
+carries the check that proves it.
 
-Supporting files: [`deploy/scaleway-provider.md`](deploy/scaleway-provider.md) documents
-the verified provider wiring and the traps that cost the most time.
+**Everything authoritative lives in [`context/`](context/CONTEXT.md). This README is an
+introduction and nothing more.**
 
-## Architecture
+---
 
-**One Linux user per family member, not one Hermes profile per family member.**
+## How it works
 
-Hermes profiles isolate Hermes state but run as the same OS user, so any member's agent
-could read every other member's secrets and memory. Since the agent can execute shell
-commands and two of the four users are children, that is not an acceptable boundary.
+**One Linux user per family member — not one Hermes profile per member.**
 
-Instead: four unprivileged Linux users, `0700` homes, no sudo, one shared system-wide
-Hermes install, and one systemd instance per user with `ProtectHome=tmpfs` +
-`BindPaths=/home/%i`.
+Hermes profiles isolate Hermes state but run as the same OS user, so any member's agent could
+read every other member's secrets and memory. The agent executes shell commands, and two of
+the four users are children. That is not an acceptable boundary.
+
+Instead: four unprivileged Linux users, `0700` homes, no sudo, one shared system-wide Hermes
+install, and one systemd instance per user with `ProtectHome=tmpfs` + `BindPaths=/home/%i`.
 
 Verified on the live host: from inside Love's gateway namespace, `ls /home/` returns only
-`love` — Robert's home does not merely deny access, it does not exist.
+`love` — Robert's home does not merely deny access, **it does not exist**.
 
 ```
 /usr/local/lib/hermes-agent      2.2 GB, shared by all four
@@ -49,534 +43,81 @@ Verified on the live host: from inside Love's gateway namespace, `ls /home/` ret
 hermes-gateway@<member>.service  per-member unit, MemoryMax=320M
 ```
 
-### Why a custom unit instead of `hermes gateway install`
+Inference runs on Scaleway Generative APIs — EU-hosted, OpenAI-compatible, 57 ms measured
+upstream latency. Web search uses one private SearXNG shared by all four profiles; page
+extraction uses Tavily; speech-to-text runs on Scaleway. Each member is also reachable from a
+phone over HTTPS through a Caddy reverse proxy, with their own bearer token.
 
-Hermes' own installer writes a single, non-templated `hermes-gateway.service` — **one
-gateway per host**. Installing it for members 2–4 just reports "already installed" and
-restarts the first one. Our [template unit](deploy/hermes-gateway@.service) also restores
-restart rate-limiting (upstream ships `StartLimitIntervalSec=0`, letting a crash loop
-retry forever and burn provider spend) and adds per-member memory caps.
+→ [ADR-001: one OS user per member](context/adr/ADR-001-one-os-user-per-member.md)
+· [SPEC-profile-isolation](context/spec/SPEC-profile-isolation.md)
 
-## Measured footprint
+---
 
-Scaleway **DEV1-S** — 2 vCPU / 2 GB / 20 GB local NVMe, **€6.55/mo** + IPv4, `fr-par-1`,
-Debian 13.
+## Deploying
 
-| | All four gateways + SearXNG running |
+Steps 1–3 rebuild the entire deployment from nothing. Steps 4–6 are additive.
+
+| # | Script | Where |
+|---|---|---|
+| 0 | `scw init` | workstation — interactive, needs a real TTY |
+| 1 | [`01-provision-scaleway.sh`](deploy/01-provision-scaleway.sh) | workstation |
+| 2 | [`02-install-hermes.sh <ip>`](deploy/02-install-hermes.sh) | workstation → host |
+| 3 | [`03-configure-profiles.sh <ip>`](deploy/03-configure-profiles.sh) | workstation → host |
+| 4 | [`configure-profile.sh <user> -`](deploy/configure-profile.sh) | host, per member |
+| 5 | [`04-enable-api-server.sh <ip>`](deploy/04-enable-api-server.sh) | workstation → host |
+| 6 | [`05-enable-web-search.sh <ip>`](deploy/05-enable-web-search.sh) | workstation → host |
+
+Each script documents its own prerequisites, idempotency and deliberate omissions in its
+header. **Read the script for step detail.**
+
+→ [RUNBOOK-00-deployment-sequence](context/runbook/RUNBOOK-00-deployment-sequence.md) for
+ordering, and what must be re-run after a VPS recreate.
+
+Step 1 writes the four inference keys to `~/.hermes-family-keys/` (mode 600). Scaleway shows
+a secret key **once**; those files are the only copy. **They never enter git.**
+
+---
+
+## Where everything lives
+
+| I want to know… | Read |
 |---|---|
-| Per gateway RSS | 133–191 MB observed across deployment stages |
-| SearXNG | ~140 MB warmed; 256 MiB hard cap; 128-PID cap |
-| Total used | 1.1 GB / 1968 MB |
-| Available | ~860 MB |
-| Swap used | 0 (2 GB swapfile configured) |
-| Disk | ~8 GB / 19 GB |
+| What is live right now, and what is broken | [context/STATE.md](context/STATE.md) |
+| How documents are organised | [context/CONTEXT.md](context/CONTEXT.md) |
+| The exact env var / config key / port / path | [`context/contract/`](context/contract/) |
+| Why something was done this way | [`context/adr/`](context/adr/) |
+| What must never regress, and how it is proven | [`context/spec/`](context/spec/) |
+| How to run a procedure with no script | [`context/runbook/`](context/runbook/) |
+| What we are trying to build, and for whom | [`context/prd/`](context/prd/) |
+| How to work in this repo as an agent | [AGENTS.md](AGENTS.md) |
 
-DEV1-S is sufficient. Two caveats: this is **idle with no messaging platforms connected**,
-and the install itself peaks at **1.6 GB** — the tightest moment on the box. `DEV1-M`
-(3 vCPU / 4 GB, €14.74/mo) is a stop/resize/start away if real usage demands it.
+**Start with [context/STATE.md](context/STATE.md)** if you want the current picture, or
+[context/CONTEXT.md](context/CONTEXT.md) if you are about to write something.
 
-Note the README's original "2 vCPU / 4 GB starter" spec matches no cheap x64 SKU:
-`DEV1-M` gives 3 vCPU / 4 GB for **less** (€14.74) than the literal 2/4 options
-(`PLAY2-NANO`, €20.10).
+---
 
-## Inference: Scaleway Generative APIs
+## Status at a glance
 
-EU-hosted, OpenAI-compatible, verified end-to-end through Hermes for all four members.
-Measured upstream latency: **57 ms**.
+Live and verified: four gateways, profile isolation, EU inference, both firewall layers,
+Discord for Mattis, voice transcription, web search and extraction, public API endpoints with
+real certificates, and model tier aliases.
 
-```yaml
-# ~/.hermes/config.yaml
-model:
-  provider: openai-api        # NOT "custom" — see scaleway-provider.md
-  default: qwen3.5-397b-a17b
-```
-```bash
-# ~/.hermes/.env  (mode 600, owned by that member)
-OPENAI_API_KEY=<that member's Scaleway key>
-OPENAI_BASE_URL=https://api.scaleway.ai/v1
-```
+Not done: per-member spend attribution (no provider path), spend caps (Scaleway has no budget
+API), child-safety controls, and messaging channels for members other than Mattis.
 
-Auxiliary models (vision, web summarisation) default to `provider: auto`, which routes
-them to the main chat model — so they stay on Scaleway too, rather than leaking to a
-non-EU provider.
+**The most significant open gap is child safety.** Mattis and Love have agents that can
+execute shell commands, with approval mode, tool restrictions and skill pruning unset.
 
-## Web queries: SearXNG + Tavily
+→ [context/STATE.md](context/STATE.md) for dated status, measured footprint, and every open
+question.
 
-Web search and page extraction are live for all four profiles. Search uses one private
-SearXNG instance; extraction uses Tavily independently, so Hermes can fetch page content
-without asking the main model to browse or summarize it.
+---
 
-```yaml
-# ~/.hermes/config.yaml
-web:
-  search_backend: searxng
-  extract_backend: tavily
+## Conventions
 
-auxiliary:
-  web_extract:
-    reasoning_effort: none
-```
-
-```bash
-# ~/.hermes/.env
-SEARXNG_URL=http://127.0.0.1:8888
-TAVILY_API_KEY=<shared Tavily key>
-```
-
-The shared backend is [`hermes-searxng.service`](deploy/hermes-searxng.service):
-
-- Official SearXNG image pinned by digest, managed by systemd through rootful Podman.
-  Podman is used because it has no resident daemon.
-- One Granian worker, JSON-only output, no image proxy, no public-instance mode.
-- `server.limiter: false`, so Valkey is unnecessary for this loopback-only service.
-- Host networking is deliberate. The host's default-drop forwarding firewall blocks a
-  container bridge's DNS/egress; `GRANIAN_HOST=127.0.0.1` and `SEARXNG_PORT=8888` keep the
-  host-networked process private without adding forwarding exceptions.
-- Container memory and total swap are both capped at 256 MiB, which means no container
-  swap; PID count is capped at 128. Measured warmed usage after live searches: ~140 MB.
-
-The service was deployed and verified on 2026-08-08 in four layers: its listener existed
-only on `127.0.0.1:8888`; direct `web_search_tool` calls returned three real results for
-each of Robert, Sofia, Mattis, and Love; direct Tavily extraction returned the content of
-`https://example.com/`; and a public API-server request using the `default` model called
-`web_extract` and correctly reported the page's title and text. Configuration read-back
-confirmed `search_backend: searxng`, `extract_backend: tavily`, and
-`auxiliary.web_extract.reasoning_effort: none` for all four profiles.
-
-The pinned Hermes version logs this successful Tavily response as a tool error because
-its generic status detector matches the nested JSON field `"error": null`. This is a
-display/logging false positive: both the direct result and the model-visible API response
-contained the extracted page. The Tavily key remains at
-`~/.hermes-family-keys/tavily.key` (mode 600); step 6 copies it through stdin, never argv,
-and is safe to rerun after rotation.
-
-## Messaging channels — no web interface needed
-
-Everything is configurable from the CLI: `hermes config set/get/unset`,
-`hermes setup --non-interactive`, and per-platform commands. Verified env var names:
-
-| Platform | Token vars | Transport | Needs DNS/public URL? |
-|---|---|---|---|
-| Discord | `DISCORD_BOT_TOKEN`, `DISCORD_ALLOWED_USERS` | WebSocket, outbound | No |
-| Slack | `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `SLACK_ALLOWED_USERS` | Socket Mode, outbound | No |
-| WhatsApp (personal) | `WHATSAPP_ENABLED`, `WHATSAPP_ALLOWED_USERS` | `hermes whatsapp` — Baileys, QR pairing | No |
-| WhatsApp (business) | — | `hermes whatsapp-cloud` — Meta Cloud API | **Yes** — public webhook |
-| Telegram | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USERS` | polling | No |
-
-So the DNS answer depends entirely on which WhatsApp backend you pick. With Discord,
-Slack and the Baileys WhatsApp bridge, **no domain, no TLS, no reverse proxy, no inbound
-ports** are required.
-
-### Configured: Discord for Mattis
-
-Verified end-to-end on 2026-07-22: DM → gateway → allowlist → Scaleway inference → reply.
-
-**One Discord application per member.** A bot token authenticates exactly one gateway, so
-members cannot share one. Each member gets their own app, token and allowlist.
-
-| Setting | Value | Why |
-|---|---|---|
-| Privileged intents | **Server Members** + **Message Content** ON, Presence OFF | Both are required. Without Message Content the bot connects, receives events, and sees empty text — it looks online and never answers. |
-| Permissions integer | `379904` | View Channels, Send Messages, Embed Links, Attach Files, Read Message History, Use Slash Commands. No thread permissions. |
-| `DISCORD_BOT_TOKEN` | Bot page → Reset Token | Shown once. Not the Application ID, Public Key or Client Secret. |
-| `DISCORD_ALLOWED_USERS` | Numeric user ID | **Must be the 18-digit snowflake, not the username.** A username silently never matches: the bot stays online and ignores every message, with nothing in the log. |
-| `DISCORD_AUTO_THREAD` | `false` | Defaults to `true`, which makes the bot spawn a thread per `@mention` — needing Create Public Threads, which `379904` deliberately omits. Set false so replies land inline. |
-
-**A server is required even for DM-only use.** Discord will not let a user open a DM to a
-bot unless they share a guild. The server is a formality; the DM is the actual surface.
-
-**Public Bot cannot be disabled.** Discord refuses to turn the toggle off, so anyone with
-the Application ID can install the bot into their own server. This is not the security
-boundary and does not need to be. `DISCORD_ALLOWED_USERS` is enforced in the adapter
-*before* any model call, so an unauthorised sender is dropped without consuming inference
-spend. Confirmed in `plugins/platforms/discord/adapter.py`.
-
-~~**Voice messages do not work.**~~ **RESOLVED 2026-07-26** — see
-[Configured: voice transcription via Scaleway](#configured-voice-transcription-via-scaleway)
-below.
-
-### Configured: voice transcription via Scaleway
-
-Verified end-to-end on 2026-07-26 against real Discord voice messages from Mattis (not
-synthesized test audio) — transcript came back correct both times ("Hello."). Reverified
-through the deployed `scaleway` command provider on 2026-08-08 after the Qwen tier update.
-
-**Root cause of the original failure:** `stt.provider` defaulted to `local`, which needs
-`faster-whisper` installed or a `HERMES_LOCAL_STT_COMMAND` — neither existed on this host.
-Confirmed in the gateway log: `STT provider 'local' configured but unavailable`. This is a
-**setting, not a skill** — unrelated to the 78 bundled skills in open question #5.
-
-**Why not just point `stt.provider: openai` at Scaleway (same trick as the chat model)?**
-Tried it first — it silently fails in a way worth documenting so nobody repeats it:
-
-1. `stt.openai.model: whisper-large-v3` gets validated against Hermes's hardcoded list of
-   *known OpenAI* model names. `whisper-large-v3` isn't on that list, so Hermes logs
-   `Model whisper-large-v3 not available on OpenAI, using whisper-1` and silently
-   substitutes it — your configured model name is discarded, not passed through.
-2. Scaleway then correctly rejects `whisper-1` (it doesn't have a model by that name):
-   `HTTP 422 MODEL NOT FOUND`.
-3. The `STT_OPENAI_BASE_URL` redirect itself worked mechanically — confirmed by the error
-   coming back as a clean Scaleway-shaped 422, not a connection failure. Only the
-   model-name substitution broke it.
-
-**The fix — `stt.providers.<name>: type: command`**, not `HERMES_LOCAL_STT_COMMAND`. This
-is a newer, documented-as-recommended mechanism (found by grepping the installed
-package's own source and docs at `/usr/local/lib/hermes-agent/website/docs/user-guide/
-features/tts.md` — this specific schema was not reliably surfaced by web search or the
-hosted docs site). Unlike `stt.provider: openai`, a command provider has no whitelist —
-Hermes just runs the shell command:
-
-```yaml
-# ~/.hermes/config.yaml, set via `hermes config set` (see 03-configure-profiles.sh)
-stt:
-  enabled: true
-  echo_transcripts: true
-  provider: scaleway
-  providers:
-    scaleway:
-      type: command
-      command: >-
-        curl -sS -X POST $OPENAI_BASE_URL/audio/transcriptions
-        -H "Authorization: Bearer $OPENAI_API_KEY"
-        -F "file=@{input_path}" -F "model=whisper-large-v3"
-        | jq -r .text
-      format: txt
-      timeout: 60
-```
-
-Hermes also has a built-in `stt.provider: local` path backed by `faster-whisper`, but this
-deployment deliberately does not use it. `faster-whisper` is not installed by the pinned
-system build, and the local model is cached for the life of each gateway process. Four
-separate gateways would therefore hold four model instances on a 2 GB host whose services
-are capped at 320 MB each. The proposed `stt.local.vad` and
-`stt.local.unload_after_idle_seconds` settings are not implemented by the pinned Hermes
-version; only `model` and `language` are consumed from `stt.local`. Hosted Scaleway STT
-keeps those weights off the VPS while still feeding the transcript into the same Hermes
-agent pipeline.
-
-The proposed `voice.*` block is valid, but it controls microphone recording in an
-interactive Hermes CLI/TUI running on the machine with the microphone. It is not needed
-for inbound Discord/Telegram/WhatsApp voice messages on this headless VPS. Also, Hermes'
-API server does not proxy an OpenAI-compatible `/v1/audio/transcriptions` route: messaging
-audio is transcribed inside the gateway, while an API client that specifically needs a
-standalone transcription endpoint must call Scaleway's endpoint directly.
-
-**A second gotcha, caught by testing against a real cached voice file before trusting the
-config:** Scaleway's `/v1/audio/transcriptions` endpoint ignores `response_format=text` and
-always returns JSON (`{"text": "...", "usage": {...}}`) regardless of what you ask for.
-Piping through `jq -r .text` — one of Hermes's two documented "how the transcript is read
-back" paths (stdout, when no `{output_path}` file is written) — sidesteps this rather than
-trying to force Scaleway to honor a parameter it doesn't respect.
-
-**`$OPENAI_BASE_URL` / `$OPENAI_API_KEY` are expanded at Hermes's runtime, not at
-config-set time** — the value must be single-quoted when passed to `hermes config set`
-(and, inside `03-configure-profiles.sh`'s remote heredoc, escaped so the *remote* shell
-executing the loop doesn't expand them either) so the literal `$VAR` text lands in
-`config.yaml` for Hermes's own subprocess call to resolve later, using the same credentials
-already configured for chat.
-
-**`hermes config set`'s "not a recognized config key" warning is noise for this schema.**
-Every key under `stt.providers.<name>.*` triggers it (`Did you mean: stt.provider`) because
-the validator doesn't know about dynamically-named provider entries — the value is still
-written correctly. Confirmed by testing: the resulting `config.yaml` matches the documented
-schema exactly, and transcription works. (The same false-positive pattern showed up earlier
-for `model_catalog` — that one, unlike this one, actually *was* the wrong key. Don't trust
-the warning either way; verify against what actually gets written and, ideally, a live test.)
-
-### Configured: `python3` wrapper (google-workspace skill reliability)
-
-`02-install-hermes.sh` installs `/usr/local/bin/python` so bundled skills that invoke a bare
-`python` (google-workspace among them) resolve to the Hermes venv (which has
-`googleapiclient` etc. installed) rather than to nothing — Debian ships no `python` at all.
-That fix, from 2026-07-22, only covered the name `python`. It did not cover `python3`.
-
-**Symptom, reported 2026-07-27:** "check my calendar" over the API server succeeded
-maybe 1 time in 5 — the rest either stalled mid-sentence (`finish_reason: stop`, no tool
-call ever made) or hallucinated ("no calendar tool installed", offering to install `gcal` or
-fall back to Python's `calendar` module). Direct CLI testing (`hermes -z "check my
-calendar"`) was more reliable (4/5) but not perfect either, pointing at something
-upstream of the API server specifically as well as this bug.
-
-**Root cause, confirmed from `journalctl -u hermes-gateway@robert`:** roughly half the time
-the model reaches for `python3` instead of `python` — a perfectly reasonable name on Debian,
-just not the wrapped one. `/usr/local/bin/python3` didn't exist, so it fell through to the
-bare system `/usr/bin/python3`, hit `ModuleNotFoundError: No module named 'googleapiclient'`,
-and then burned the rest of the turn trying to self-heal: `pip install` (no `pip` in that
-interpreter), `curl -Ls https://astral.sh/uv/install.sh | sh` (blocked on a pending security
-approval), `apt-get install` (permission denied, not root), `pip3` (not found). Every one of
-those attempts is logged as a distinct failed tool call — the agent never once tried plain
-`python`, which was sitting there working the entire time.
-
-**Fix:** `02-install-hermes.sh` now installs the identical wrapper under both names:
-
-```sh
-for bin in python python3; do
-  cat > "/usr/local/bin/$bin" <<'EOF'
-#!/bin/sh
-exec /usr/local/lib/hermes-agent/venv/bin/python "$@"
-EOF
-  chmod 755 "/usr/local/bin/$bin"
-done
-```
-
-Verified post-fix: `sudo -u robert env PATH=/usr/local/bin:/usr/bin:/bin python3 -c "import
-googleapiclient"` succeeds. Same symlink caveat as the original `python` fix applies to both
-names — a symlink resolves through to `uv`'s interpreter shim, which then can't see the venv
-site-packages; only `exec`-ing the venv's own interpreter by path works.
-
-**Considered and rejected: routing `python`/`python3` through `uv` instead**, prompted by a
-reasonable question — with 4 profiles on one host, wouldn't `uv`'s shared cache save space?
-Checked before doing it: the venv is already **shared across all four profiles** (one 235 MB
-tree at `/usr/local/lib/hermes-agent/venv`, not four), so there is no
-per-profile duplication for `uv`'s cache to eliminate, and disk was never the binding
-constraint on this box anyway (19 GB disk, 9.8 GB free at time of writing; the actual scarce
-resource is RAM — see Measured footprint). Separately, `uv run` only knows what to install
-for a script that declares its dependencies via inline PEP 723 metadata or sits inside a
-`pyproject.toml` project; none of the 67 `.py` files across bundled skills do either
-(confirmed by grep) — they're plain `#!/usr/bin/env python3` scripts written to assume a
-conventional pre-populated venv. Pointing `python3` at `uv run` would very likely reproduce
-the same `ModuleNotFoundError` through a different path. (A `uv` binary does already exist
-on the host, at `/root/.hermes/bin/uv` — almost certainly what Hermes's own installer used
-to build the venv — but it's root-owned and outside the sanitized PATH the agent's shell
-tool runs with, which is very likely what actually sent the model down the failed
-`curl | sh` install attempt above rather than finding it.)
-
-## Mobile / API access
-
-Each member's agent is also reachable directly over HTTPS via hermes-agent's built-in
-OpenAI-compatible API server, fronted by a lightweight Caddy reverse proxy — one FQDN per
-member, real Let's Encrypt certs via dynv6 DNS-01. Point any OpenAI-compatible client
-(e.g. [Chatbox](https://github.com/chatboxai/chatbox)) at the URL below with the member's
-bearer token.
-
-| Member | URL | Loopback port | Bearer token (local only, never on the host) |
-|---|---|---|---|
-| Robert | `https://1.agent-hermes.dynv6.net` | 8642 | `~/.hermes-family-keys/api-server/robert.key` |
-| Sofia  | `https://2.agent-hermes.dynv6.net` | 8643 | `~/.hermes-family-keys/api-server/sofia.key` |
-| Mattis | `https://3.agent-hermes.dynv6.net` | 8644 | `~/.hermes-family-keys/api-server/mattis.key` |
-| Love   | `https://4.agent-hermes.dynv6.net` | 8645 | `~/.hermes-family-keys/api-server/love.key` |
-
-Verify any endpoint:
-
-```bash
-curl https://1.agent-hermes.dynv6.net/v1/chat/completions \
-  -H "Authorization: Bearer $(cat ~/.hermes-family-keys/api-server/robert.key)" \
-  -H "Content-Type: application/json" \
-  -d '{"model": "hermes-agent", "messages": [{"role": "user", "content": "Hello!"}]}'
-```
-
-Deliberately opaque subdomain labels (`1`–`4`, not member names): Let's Encrypt certificate
-issuance is permanently, publicly logged in Certificate Transparency (crt.sh etc.) — a
-`mattis-hermes.example.com` cert would forever tie a child's name to a host known (from
-hermes-agent's own docs) to run an agent with terminal access.
-
-Each hermes-agent API server stays bound to `127.0.0.1` — Caddy is the only thing with a
-public listener, since the API server "gives full access to hermes-agent's toolset,
-including terminal commands" (its own docs' words).
-
-**`API_SERVER_CORS_ORIGINS` is required for browser-like clients, not optional.**
-Discovered 2026-07-27: `curl` testing all session never caught this, because `curl` isn't
-subject to CORS at all — it was clean the whole time from that angle. Chatbox routes some
-calls (at least its `/v1/models` fetch) through its own `cors-proxy.chatboxai.app` backend,
-which emulates browser CORS enforcement even though this specific hop is server-to-server
-and CORS strictly doesn't apply there. Without `API_SERVER_CORS_ORIGINS` set,
-`OPTIONS /v1/models` returns `403` with **no** `Access-Control-Allow-*` headers at all —
-Chatbox reads that as a failed preflight and aborts before ever sending the real request,
-surfacing client-side as `Network Error: Failed to fetch (cors-proxy.chatboxai.app)` with
-nothing informative to debug from server-side (no request even reaches the access log).
-Symptom looked like two separate problems — a network error, and the model tier aliases
-appearing to not work / "cannot switch models" — but both traced back to this one cause:
-Chatbox's model list never refreshed past its original single-model cache because the
-listing call kept failing the same preflight.
-
-Fixed with `API_SERVER_CORS_ORIGINS=*` in `04-enable-api-server.sh`. `*` is fine here —
-CORS and bearer-token auth are orthogonal; every endpoint still requires the token
-regardless of origin, this setting only controls which origins get the response headers a
-browser/proxy needs to not discard an otherwise-successful response.
-
-### Model tier aliases
-
-The API server (and only the API server — see below) exposes three named model tiers via
-`GET /v1/models`, so family members pick `quick` / `default` / `smart` in Chatbox.
-All three use the same model and vary only its reasoning effort:
-
-| Alias | Model | `reasoning_effort` |
-|---|---|---|
-| `quick` | [`qwen3.5-397b-a17b`](https://console.scaleway.com/generative-api/models/playground?modelName=qwen3.5-397b-a17b) | `none` |
-| `default` | [`qwen3.5-397b-a17b`](https://console.scaleway.com/generative-api/models/playground?modelName=qwen3.5-397b-a17b) | `medium` |
-| `smart` | [`qwen3.5-397b-a17b`](https://console.scaleway.com/generative-api/models/playground?modelName=qwen3.5-397b-a17b) | `high` |
-
-**Alias names are the stable contract.** The shared backend and effort levels live in
-`03-configure-profiles.sh` (`ALIAS_MODEL` / `EFFORT_QUICK` / `EFFORT_DEFAULT` /
-`EFFORT_SMART`). Re-running the script also removes the superseded `medium` and `ultra`
-routes from existing profiles.
-
-[Scaleway accepts](https://www.scaleway.com/en/docs/generative-apis/reference-content/supported-models/#qwen35-397b-a17b)
-`none`, `low`, `medium`, and `high` for this model. The
-[Hermes configuration docs](https://hermes-agent.nousresearch.com/docs/user-guide/configuration)
-show global, per-model, auxiliary-task, and session reasoning controls. They also call out
-MoA as a special case: effort remains configured separately in each reference model's and
-the aggregator's own slot. Upstream `model_routes` accepts only
-model/provider/credential fields, so the deployment applies
-[hermes-api-model-route-reasoning.patch](deploy/hermes-api-model-route-reasoning.patch), a
-narrow extension that accepts a route-level `reasoning_effort`, validates it, updates
-Hermes' internal reasoning config, and forwards the value as Scaleway's top-level request
-field. It does not alter auxiliary tasks or MoA.
-
-The reasoning-based mapping was deployed and verified on 2026-08-08. All four public model
-lists contained only `quick`, `default`, and `smart`; live calls succeeded for every profile.
-Robert's recorded API sessions confirmed the effective reasoning configs as disabled,
-`medium`, and `high`, respectively. These are the repeatable checks:
-
-```bash
-# 1. Appears in the model list
-curl https://1.agent-hermes.dynv6.net/v1/models -H "Authorization: Bearer $(cat ~/.hermes-family-keys/api-server/robert.key)"
-
-# 2. Confirm via the agent log (not just a 200 response) that a request with
-#    "model": "quick" logs model=qwen3.5-397b-a17b reasoning_effort=none
-curl https://1.agent-hermes.dynv6.net/v1/chat/completions \
-  -H "Authorization: Bearer $(cat ~/.hermes-family-keys/api-server/robert.key)" \
-  -H "Content-Type: application/json" \
-  -d '{"model": "quick", "messages": [{"role": "user", "content": "Hello!"}]}'
-```
-
-**This is a separate mechanism from `model.default` above, easy to confuse with two other
-config keys that don't do this:**
-
-- `platforms.api_server.extra.model_routes.<alias>.{model,provider,reasoning_effort}` —
-  the deployed key. `model` and `provider` are upstream; `reasoning_effort` is supplied by
-  the narrow deployment patch described above.
-- `model_catalog.<name>.*` and `model_aliases.<name>.*` — both dead ends, tried first. Both
-  are "recognized" by `hermes config set` (no warning), but neither actually resolves as a
-  callable model via `model.default` or the `-m` CLI flag (`HTTP 422: model 'x' not
-  found` — confirmed on the live host, not assumed). These may govern something else
-  entirely, or nothing yet; they are not the API-server model-tier mechanism regardless.
-- `hermes config set`'s "not a recognized config key" warning is noise specifically for
-  `platforms.api_server.extra.model_routes.<alias>.*` — these dynamic keys may trigger
-  `Did you mean: stt.provider` because the validator doesn't know about dynamically-named
-  entries. The value is still written correctly; this is the same false-positive pattern
-  documented under [Configured: voice transcription via Scaleway](#configured-voice-transcription-via-scaleway).
-  Don't trust the warning either way — verify against what's actually written and, ideally,
-  a live request.
-
-**`qwen3.5-397b-a17b` requires an explicit output-token cap.** Without it, requests fail
-with:
-
-```
-HTTP 400: payload validation: max_completion_tokens is limited to 16384 for qwen3.5-397b-a17b
-```
-
-Hermes otherwise falls back to a per-provider default above Scaleway's hard cap. Confirmed
-via source (`gateway/run.py`) that `model.max_tokens` is checked before that fallback, and
-that `model_routes` has no per-alias token-limit override. The global setting used by all
-three tiers is:
-
-```bash
-hermes config set model.max_tokens 16384
-```
-
-This is codified in `03-configure-profiles.sh` and was verified live on 2026-08-08.
-
-### Configured: dynv6 + Caddy reverse proxy
-
-Verified end-to-end on 2026-07-26: all four member endpoints return `200` with real
-production Let's Encrypt certs. Traps that cost time getting here:
-
-- **dynv6 has two unrelated token types.** The TSIG key (`dynv6.com/keys/tsig/new`, for
-  RFC2136 `nsupdate`) is NOT what Caddy's `caddy-dns/dynv6` plugin needs — that plugin
-  authenticates via Bearer token against dynv6's REST API v2
-  (`https://dynv6.com/api/v2/...`). Confirmed by reading the plugin's Go source after a
-  TSIG key got a clean `401`. The right credential is the plain **HTTP Token** from the
-  general `dynv6.com/keys` page. Stored at `/etc/dynv6/api-token.env`
-  (`DYNV6_API_TOKEN=...`), root:root mode 600, deliberately outside every
-  `/home/<member>` tree — a `hermes-gateway@<member>` process can read its own home, and
-  this credential can rewrite DNS + certs for the whole family.
-- **`caddyserver.com`'s prebuilt-binary download API doesn't carry every `caddy-dns/*`
-  plugin** — `dynv6` isn't in its catalog (400: "not a registered Caddy module package
-  path"), even though the module itself is real. Built a custom binary locally instead
-  with `xcaddy` (`GOOS=linux GOARCH=amd64 xcaddy build --with github.com/caddy-dns/dynv6`)
-  and shipped it via `scp` — avoids installing a Go toolchain on the 2 GB VPS entirely.
-- **Caddy silently falls back to the Let's Encrypt *staging* CA** after a couple of failed
-  issuance attempts on one domain (a built-in rate-limit safety net) — the resulting cert
-  is real but untrusted by any client. A full `systemctl restart caddy` (not just
-  `reload`) resets that state and forces a fresh attempt against production.
-- **DNS-01, not HTTP-01** — chosen specifically so port 80 never needs to be open, only
-  443.
-
-## Requirements status
-
-| ID | Requirement | Status |
-|---|---|---|
-| R1 | Run Hermes on a cheap Scaleway VPS | **Done** — DEV1-S, €6.55/mo, verified |
-| R2 | Run 4 profiles continuously | **Done** — 4 systemd units, boot-enabled |
-| R3 | Keep family profiles separate | **Done** — OS-user + mount-namespace isolation, verified |
-| R4 | Internet-safe security baseline | **Done** — SSH key-only, no sudo, hardened units, unattended upgrades, host nftables + Scaleway security group both default-drop inbound with explicit `22`/`443`-only allow rules, verified from a fresh connection before trusting either change. |
-| R5 | Clarify DNS need | **Done** — not needed unless using WhatsApp Cloud API |
-| R6 | Track inference spend per profile | **Open** — see below |
-| R7 | Enforce cost control per profile | **Blocked** — see below |
-| R8 | Mixed messaging channels per member | **Partly** — Discord live for Mattis, verified end-to-end. Other members and platforms not yet added. |
-
-## Open questions
-
-1. **Per-member billing attribution is unresolved (R6).** The design gives each member
-   their own Scaleway project and a key whose `default_project_id` points at it. But so
-   far *all* Generative APIs consumption is recorded against the organisation's default
-   project, with zero against the four `hermes-*` projects — even after deliberately
-   asymmetric per-key load. Billing may settle daily; **re-check after 24h** with:
-   ```bash
-   scw billing consumption list -o json | jq -r '.[]|select(.category_name=="AI")|"\(.product_name) \(.project_id)"'
-   ```
-   If it does not resolve, per-member attribution is not achievable on Scaleway and R6
-   needs either a different provider or client-side token accounting.
-
-2. **Scaleway has no spend caps (R7).** Its billing API exposes only `consumption`,
-   `discount`, `invoice` — no budget API. There is no provider-side equivalent of
-   OpenRouter's per-key hard limit, and no way to "disable only the over-budget key"
-   automatically. Enforcement would have to be a timer on the host that polls consumption
-   and stops a gateway past a threshold. Not yet built.
-
-3. ~~Host firewall not configured.~~ **RESOLVED 2026-07-26.** Both layers now default-drop
-   inbound with explicit allow rules for `22`/`443` only, applied in the safe order
-   (explicit allows added first, default policy flipped second) and verified from a fresh
-   connection immediately after each change:
-   - Host: [`deploy/nftables-hermes.conf`](deploy/nftables-hermes.conf), persisted via the
-     standard `nftables.service` (`/etc/nftables.conf`).
-   - Cloud: Scaleway security group `Default security group`
-     (`inbound-default-policy=drop`, explicit `accept` rules for TCP 22 and 443).
-   `80` is deliberately not open on either layer — see [Mobile / API access](#mobile--api-access)
-   for why DNS-01 never needs it.
-
-4. **Real-load memory is unmeasured.** All figures are idle with no channels connected.
-   `MemoryMax=320M` per member is comfortable now but untested against live Slack/Discord/
-   WhatsApp clients and concurrent conversations.
-
-5. **Child-safety controls not configured.** Mattis and Love get agents that can execute
-   shell commands. Approval mode, tool restrictions and skill pruning have not been set.
-   78 bundled skills are seeded per member by default, most irrelevant for a family.
-
-6. **Key rotation.** Scaleway enforces API key expiry, hard-capped at **365 days** — a
-   3-year request is rejected regardless of the org setting. Keys expire and must be
-   rotated annually; no automation exists yet.
-
-7. ~~**No web-query backends configured.**~~ **RESOLVED 2026-08-08:** all profiles use
-   the shared private SearXNG service for search and Tavily for page extraction, as
-   documented above. Browser automation, image generation, and TTS still have no backend.
-   STT remains the separately configured Scaleway path documented above.
-
-## Operational notes
-
-- **Connect with `-o IdentitiesOnly=yes`.** Our SSH hardening sets `MaxAuthTries 3`; an
-  agent holding several keys exhausts that before offering the right one.
-- **SSH keys are project-scoped in Scaleway.** A key registered in another project is not
-  injected, and the instance boots unreachable — a reboot does not fix it.
-- **Resources cannot move between projects.** Relocating the VPS means recreating it.
-- **Messaging libraries must be installed at build time.** Hermes lazy-installs platform
-  deps on first use, but the gateway units run `ProtectSystem=full`, so `/usr/local/lib`
-  is read-only to them and the lazy install can never succeed. Step 2 installs the
-  Discord/Slack/Telegram deps up front, reading the version pins from the pinned tree's
-  own `LAZY_DEPS` table so they cannot drift from `PIN_COMMIT`. Symptom when missing:
-  `Platform 'Discord' requirements not met` and a gateway that starts with no platforms.
-- **The venv has no `pip`.** It is uv-created; use
-  `/root/.hermes/bin/uv pip install --python /usr/local/lib/hermes-agent/venv/bin/python`.
-  A bare `pip list` fails, which makes "is package X installed?" checks silently return
-  nothing rather than an error.
+- **No credential ever enters this repository** — not in a script, not in a document, not as
+  an example. Secrets pass through stdin, never argv.
+- **Every claim about the live host is dated.** An undated claim about a machine decays into
+  folklore; `verified_on: null` is the honest alternative.
+- **Verify from the log, not the status code.** A `200` proves a request was accepted, not
+  that a setting took effect.

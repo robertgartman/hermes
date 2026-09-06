@@ -1,0 +1,41 @@
+# Commit-time sanity checks. See context/adr/ADR-008-commit-time-sanity-checks.md
+#
+# Install once per CLONE (not per worktree):  lefthook install
+# Run on demand without committing:           lefthook run pre-commit --all-files
+#
+# Two failure modes here are silent, so check rather than assume:
+#   - Hooks never installed. `git commit` then runs nothing and says nothing.
+#     CI is the backstop, not the first line of defence.
+#   - No staged file matches a command's glob, so the command is skipped
+#     silently. Every glob below therefore lists everything that can break the
+#     corresponding check — not just the obvious extension.
+
+pre-commit:
+  parallel: true
+  commands:
+
+    shellcheck:
+      glob: "*.sh"
+      run: ./scripts/lint-shell.sh {staged_files}
+
+    yamllint:
+      glob: "*.{yml,yaml}"
+      run: ./scripts/lint-yaml.sh {staged_files}
+
+    # Not globbed on context/** alone: AGENTS.md, CLAUDE.md and README.md link
+    # into context/, and the deploy scripts are referenced by RUNBOOKs — a
+    # rename in any of them can dangle a link the docs rely on.
+    context-docs:
+      glob: "*.md"
+      run: ./scripts/validate-context.sh
+
+    # Deliberately not globbed. A credential can land in any file type, and the
+    # rule this enforces ("no credential ever enters this repo") has no
+    # exceptions to carve out.
+    secrets:
+      run: ./scripts/scan-secrets.sh --staged
+
+pre-push:
+  commands:
+    full-check:
+      run: ./scripts/validate-context.sh && ./scripts/scan-secrets.sh

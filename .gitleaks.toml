@@ -1,0 +1,26 @@
+# gitleaks configuration. See context/adr/ADR-008-commit-time-sanity-checks.md
+#
+# gitleaks scans GIT HISTORY, not just the working tree, so findings here may
+# point at commits whose content is long gone from HEAD. Rewriting history is
+# not the remedy for a false positive — an allowlist is.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = """
+Documentation placeholders of the form hermes_<member>_local_api_key.
+
+These appeared in the original README's verification examples (commit 74bc846,
+2026-07-22) and were removed in 3a18e6e. They are descriptive placeholder
+strings, never issued credentials: each is literally the member's name plus
+'local_api_key'. gitleaks' curl-auth-header rule matches them because they sit
+inside an `Authorization: Bearer` header in an example command.
+
+Scoped to this exact shape rather than to the commit, so the initial commit
+stays fully scanned for anything else.
+"""
+regexTarget = "match"
+regexes = [
+  '''hermes_(robert|sofia|mattis|love)_local_api_key''',
+]

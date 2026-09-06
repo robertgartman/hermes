@@ -1,0 +1,47 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install tooling
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends shellcheck
+          pipx install yamllint
+          curl -sSfL -o /tmp/gitleaks.tar.gz \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+          sudo install -m 755 /tmp/gitleaks /usr/local/bin/gitleaks
+
+      # Fails the build if a tool is missing, unlike the local hooks which skip
+      # loudly. CI is where "unchecked" is not an acceptable outcome.
+      - name: Verify tooling present
+        run: |
+          for t in shellcheck yamllint gitleaks; do
+            command -v "$t" >/dev/null || { echo "::error::$t missing"; exit 1; }
+          done
+
+      - name: Shell
+        run: ./scripts/lint-shell.sh
+
+      - name: YAML
+        run: ./scripts/lint-yaml.sh
+
+      - name: Context documents
+        run: ./scripts/validate-context.sh
+
+      - name: Secrets
+        run: ./scripts/scan-secrets.sh

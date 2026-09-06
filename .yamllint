@@ -1,0 +1,29 @@
+# cloud-init and CI YAML is machine-shaped, not style-guide-shaped.
+# Check what breaks a boot or a build, not what offends a formatter.
+extends: default
+rules:
+  line-length: disable
+  comments-indentation: disable
+  document-start: disable
+
+  # `#cloud-config` on line 1 of cloud-init-hermes-base.yaml is a MANDATORY
+  # directive and must be exactly that — a starting space breaks the boot.
+  # It cannot be waived per-line either, since nothing may precede line 1.
+  comments:
+    require-starting-space: false
+
+  # cloud-init's runcmd list form is idiomatic as `- [ sh, -c, "..." ]`.
+  # Reformatting a verified, boot-critical file to satisfy a formatter is the
+  # wrong trade.
+  brackets:
+    max-spaces-inside: 1
+
+  # check-keys must stay false: GitHub Actions' `on:` key parses as a boolean
+  # and is flagged otherwise, which would fail CI on a correct workflow.
+  truthy:
+    check-keys: false
+    allowed-values: ['true', 'false', 'yes', 'no']
+
+  indentation:
+    spaces: consistent
+    indent-sequences: whatever
