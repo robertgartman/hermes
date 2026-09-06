@@ -141,8 +141,9 @@ on a reinstall. See OQ-7.
 | Per-member spend tracking | **Unresolved** | — | See OQ-1 |
 | Child-safety controls | **Not configured** | — | See OQ-4 — **the most significant open gap** |
 | Jupyter live-kernel skill (on family gateways) | **Seeded, inert, and must stay so** | 2026-09-06 | Present in all four homes incl. both children; prerequisites unmet. [ADR-011](adr/ADR-011-tutor-sandbox-isolation.md) **rejects** enabling it here — see OQ-8 |
-| Tutor sandbox — kernel half | **Running, incomplete** | 2026-09-06 | Podman pod `tutor`: digest-pinned JupyterLab + the ADR-012 stack, token-authenticated, bound to pod loopback, unreachable from host and from every family gateway. **No orchestrator, so not usable** — see OQ-10 |
-| Tutor sandbox — orchestrator | **Not built** | — | Blocked on pod egress (firewall change) and a model credential — see OQ-10 |
+| Tutor sandbox — kernel | **Running** | 2026-09-06 | Podman pod `tutor`: digest-pinned JupyterLab + the ADR-012 stack, token-authenticated, bound to pod loopback, unreachable from the host and from every family gateway |
+| Tutor sandbox — orchestrator | **Running** | 2026-09-06 | `hermes-agent:v2026.7.20` in the same pod, reusing a member key. Inference works; it created a live kernel over Jupyter's API (`201`, one kernel). Egress and the credential are both resolved |
+| Tutor — kernel execution skill | **Live** | 2026-09-06 | Vendored `deploy/tutor/jupyter_exec.py`, bind-mounted read-only at `/opt/hermes-tutor/`. Verified: state persists across separate invocations on one kernel, sympy solves, errors exit non-zero. The third-party `jupyter-live-kernel` skill was **removed** from the orchestrator so it cannot fall back to cloning unvendored code |
 
 ---
 
